@@ -4,6 +4,7 @@ import { store } from './store.js';
 import { initUI, openSetup } from './ui.js';
 import { requestPersistence } from './db.js';
 import { toast } from './util.js';
+import { createUpdater } from './update.js';
 
 async function boot() {
   const bootEl = document.getElementById('boot');
@@ -48,22 +49,31 @@ async function boot() {
     }
   });
 
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    const hadController = !!navigator.serviceWorker.controller;
-    // updateViaCache: 'none' 让浏览器每次都真的去取 sw.js，而不是吃 HTTP 缓存
-    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
-      reg.update().catch(() => {});
-      setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000);
-    }).catch(() => {});
+  const updater = createUpdater({
+    readSha: readDeploySha,
+    notify: (msg) => toast(msg),
+    busy: composerBusy,
+  });
+  updater.init();
 
-    // 新版本接管后自动刷新一次，避免「改了代码但手机还是旧界面」
-    let reloading = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!hadController || reloading) return;
-      reloading = true;
-      location.reload();
-    });
-  }
+  // 编辑结束（关闭编辑器）时，把编辑期间攒下的更新放行
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') updater.settle();
+  });
+}
+
+function readDeploySha() {
+  return fetch(`./version.json?t=${Date.now()}`, { cache: 'no-store' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => (data && data.sha ? String(data.sha) : null))
+    .catch(() => null);
+}
+
+function composerBusy() {
+  const box = document.getElementById('composer');
+  if (!box || box.hidden) return false;
+  const text = document.getElementById('composer-text');
+  return !!(text && text.value.trim());
 }
 
 boot();

@@ -1,4 +1,4 @@
-const VERSION = 'v7';
+const VERSION = 'v8';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
 const MEDIA_CACHE = 'notestream-media';
 const MEDIA_MAX_ENTRIES = 260;
@@ -9,6 +9,7 @@ const SHELL = [
   './styles.css',
   './manifest.webmanifest',
   './js/app.js',
+  './js/update.js',
   './js/ui.js',
   './js/store.js',
   './js/db.js',
@@ -49,6 +50,14 @@ self.addEventListener('fetch', (e) => {
   }
 
   if (url.origin === location.origin) {
+    // 部署标记：永远直连网络，不缓存。App 靠它判断线上有没有新版。
+    if (url.pathname.endsWith('/version.json')) {
+      e.respondWith(fetch(req, { cache: 'no-store' }).catch(() => new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      })));
+      return;
+    }
+
     // 界面文件一律「先网络、失败才用缓存」：改了代码下次打开就是新的，
     // 离线时仍然能打开。之前用 stale-while-revalidate，会先吐旧文件，
     // 于是手机上经常看到上一版的界面。
@@ -59,7 +68,10 @@ self.addEventListener('fetch', (e) => {
 async function networkFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
   try {
-    const res = await fetch(req);
+    // 关键：GitHub Pages 给静态资源带了 max-age=600 的 CDN 缓存头，
+    // 普通 fetch(req) 会命中浏览器 HTTP 缓存，最多能拿到 10 分钟前的旧文件。
+    // cache: 'no-cache' 强制用 ETag 回源校验（没变就是 304，几乎不花流量）。
+    const res = await fetch(req, { cache: 'no-cache' });
     if (res.ok) cache.put(req, res.clone());
     return res;
   } catch {

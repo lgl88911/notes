@@ -9,7 +9,7 @@ import {
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
 
 const els = {};
-const APP_VERSION = 'v1.4';
+const APP_VERSION = 'v1.5';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;

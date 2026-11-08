@@ -27,6 +27,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Write deploy marker
+        # App 端定时读这个文件比对提交号，用来判断线上是否换了新版本
+        run: |
+          printf '{\n  "sha": "%s",\n  "built": "%s"\n}\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > version.json
+          cat version.json
       - name: Strip repo metadata and note data from artifact
         # 只发布 App 本体；笔记和媒体通过 raw.githubusercontent 读取，不用 Pages 托管
         run: rm -rf .git .github notes media
