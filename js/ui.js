@@ -3,13 +3,13 @@
 import { store } from './store.js';
 import { notes as dbNotes, blobs as dbBlobs, meta as dbMeta, storageEstimate } from './db.js';
 import {
-  $, $$, esc, renderText, findMediaLinks, fmtTime, fmtDayLabel, dayKey, fmtDur, fmtBytes, fmtDateShort,
+  $, $$, esc, renderText, findMediaLinks, findEmbedLinks, fmtTime, fmtDayLabel, dayKey, fmtDur, fmtBytes, fmtDateShort,
   pad, toast, haptic, debounce, isoLocal,
 } from './util.js';
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
 
 const els = {};
-const APP_VERSION = 'v1.3';
+const APP_VERSION = 'v1.4';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -308,7 +308,8 @@ function noteHTML(n, keyword) {
 // 图片/视频/音频的直链直接在笔记里渲染出来，不用另外上传；不支持的格式仍只是普通链接。
 function linkMediaHTML(text) {
   const items = findMediaLinks(text);
-  if (!items.length) return '';
+  const embeds = findEmbedLinks(text);
+  if (!items.length && !embeds.length) return '';
   const imgs = items.filter((x) => x.t === 'image');
   const vids = items.filter((x) => x.t === 'video');
   const auds = items.filter((x) => x.t === 'audio');
@@ -322,6 +323,13 @@ function linkMediaHTML(text) {
       </button>`;
     }
     html += '</div>';
+  }
+  for (const e of embeds) {
+    html += `<div class="ext-embed" data-platform="${esc(e.platform)}">
+      <iframe src="${esc(e.src)}" loading="lazy" title="${esc(e.platform)} 播放器"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    </div>`;
   }
   for (const it of vids) {
     html += `<video class="ext-player" src="${esc(it.url)}" controls preload="metadata" playsinline referrerpolicy="no-referrer"></video>`;
