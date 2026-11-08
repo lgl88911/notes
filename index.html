@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#f7f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="随想">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<title>随想</title>
+</head>
+<body>
+
+<div id="boot" class="boot">载入中…</div>
+
+<!-- ===================== 主界面 ===================== -->
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="topbar-title">
+      <span class="brand">随想</span>
+      <span class="sync-chip" id="sync-chip" hidden></span>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="btn-search" aria-label="搜索">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-settings" aria-label="设置">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.2M12 18.3v2.2M4.9 7.6l1.9 1.1M17.2 15.3l1.9 1.1M4.9 16.4l1.9-1.1M17.2 8.7l1.9-1.1"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="feed" class="feed"></main>
+
+  <div id="feed-foot" class="feed-foot">
+    <div class="spinner" id="feed-spinner" hidden></div>
+    <div id="feed-note" class="feed-note"></div>
+  </div>
+
+  <div class="composer-bar" id="composer-bar">
+    <button class="composer-fake" id="btn-compose">
+      <span>记点什么…</span>
+    </button>
+    <button class="composer-tool" id="btn-quick-image" aria-label="图片">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="8.6" cy="10" r="1.6"/><path d="M3.4 16.5l4.6-4.3 4 3.6 3-2.6 5.6 4.8"/></svg>
+    </button>
+    <button class="composer-tool" id="btn-quick-audio" aria-label="录音">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="9" y="3" width="6" height="10.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- ===================== 首次配置 ===================== -->
+<div id="setup" class="sheet-page" hidden>
+  <div class="setup-inner">
+    <h1 class="setup-title">随想</h1>
+    <p class="setup-sub">短笔记流，数据全部存在你自己的 GitHub 公开仓库里。</p>
+
+    <label class="field">
+      <span class="field-label">仓库</span>
+      <div class="field-row">
+        <input id="setup-owner" placeholder="用户名" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <span class="field-slash">/</span>
+        <input id="setup-repo" placeholder="仓库名" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+    </label>
+
+    <label class="field">
+      <span class="field-label">访问令牌 <em>Fine-grained token，权限 Contents: Read and write</em></span>
+      <input id="setup-token" type="password" placeholder="github_pat_..." autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+
+    <label class="field">
+      <span class="field-label">分支</span>
+      <input id="setup-branch" value="main" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+
+    <div class="setup-hint" id="setup-hint">
+      令牌只保存在本机浏览器里，不会上传到任何服务器。仓库是公开的，任何人都能读到你的笔记，注意别记私密信息。
+    </div>
+
+    <button class="btn-primary btn-block" id="btn-setup-save">连接并开始</button>
+    <button class="btn-text" id="btn-setup-help">怎么创建令牌？</button>
+    <div class="setup-help" id="setup-help" hidden>
+      <p>1. 打开 GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b></p>
+      <p>2. Repository access 选 Only select repositories，勾选你的笔记仓库</p>
+      <p>3. Permissions → Repository permissions → <b>Contents</b> 设为 Read and write</p>
+      <p>4. 生成后复制到上面的输入框。GitHub Pages 会自动从这个仓库部署这个 App。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 编辑器 ===================== -->
+<div id="composer" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel composer-panel">
+    <div class="composer-head">
+      <button class="btn-text" data-close>取消</button>
+      <span class="composer-head-title" id="composer-title">新笔记</span>
+      <button class="btn-send" id="btn-save-note">发布</button>
+    </div>
+    <textarea id="composer-text" class="composer-text" placeholder="现在在想什么…" rows="1"></textarea>
+    <div class="attach-strip" id="attach-strip"></div>
+    <div class="composer-tools">
+      <button class="tool-btn" id="tool-image">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="8.6" cy="10" r="1.6"/><path d="M3.4 16.5l4.6-4.3 4 3.6 3-2.6 5.6 4.8"/></svg>
+        <span>图片</span>
+      </button>
+      <button class="tool-btn" id="tool-audio">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="9" y="3" width="6" height="10.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+        <span>录音</span>
+      </button>
+      <button class="tool-btn" id="tool-video">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="12.5" height="13" rx="3"/><path d="M15.5 11l5-3v8l-5-3z"/></svg>
+        <span>视频</span>
+      </button>
+      <span class="composer-count" id="composer-count"></span>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="file-image" accept="image/*" hidden>
+<input type="file" id="file-video" accept="video/*" hidden>
+
+<!-- ===================== 录音面板 ===================== -->
+<div id="recorder" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel recorder-panel">
+    <div class="rec-title">录音</div>
+    <div class="rec-time" id="rec-time">00:00</div>
+    <div class="rec-wave" id="rec-wave"></div>
+    <div class="rec-actions">
+      <button class="btn-text" data-close>取消</button>
+      <button class="rec-btn" id="rec-toggle" aria-label="开始录音">
+        <span class="rec-dot"></span>
+      </button>
+      <button class="btn-text btn-text-strong" id="rec-done" disabled>完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 搜索 ===================== -->
+<div id="search" class="sheet-page" hidden>
+  <div class="search-head">
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      <input id="search-input" placeholder="搜索笔记" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="icon-btn" id="btn-search-close" aria-label="关闭">取消</button>
+    </div>
+  </div>
+  <div class="search-body" id="search-body"></div>
+</div>
+
+<!-- ===================== 设置 ===================== -->
+<div id="settings" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel settings-panel">
+    <div class="sheet-head">
+      <span class="sheet-title">设置</span>
+      <button class="btn-text" data-close>完成</button>
+    </div>
+    <div class="settings-body" id="settings-body"></div>
+  </div>
+</div>
+
+<!-- ===================== 查看器 ===================== -->
+<div id="viewer" class="viewer" hidden>
+  <div class="viewer-backdrop" data-close></div>
+  <div class="viewer-content" id="viewer-content"></div>
+  <button class="viewer-close" id="viewer-close" aria-label="关闭">✕</button>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

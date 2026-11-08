@@ -1,0 +1,38 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    # 记笔记产生的提交只改 notes/ 和 media/，不需要重新部署 App
+    paths-ignore:
+      - 'notes/**'
+      - 'media/**'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strip repo metadata and note data from artifact
+        # 只发布 App 本体；笔记和媒体通过 raw.githubusercontent 读取，不用 Pages 托管
+        run: rm -rf .git .github notes media
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

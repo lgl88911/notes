@@ -1,0 +1,11 @@
+{
+  "name": "note-stream",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "短笔记流 PWA，数据存放在自己的 GitHub 仓库",
+  "scripts": {
+    "test": "node test/roundtrip.test.mjs",
+    "serve": "python3 -m http.server 8765 --bind 127.0.0.1"
+  }
+}

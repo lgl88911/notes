@@ -1,0 +1,13 @@
+.DS_Store
+Thumbs.db
+*.log
+node_modules/
+
+# 编辑器
+.vscode/
+.idea/
+
+# 本地测试产物
+/tmp/
+*.apk
+*.keystore
