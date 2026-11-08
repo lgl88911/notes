@@ -297,7 +297,7 @@ export const store = {
     if (!this.gh) return [];
     if (!quiet) { this.syncState = 'syncing'; this.emit('sync'); }
     try {
-      const { files } = await this.gh.tree();
+      const { files, truncated } = await this.gh.tree();
       const shas = {};
       for (const f of files) {
         if (NOTE_PATH_RE.test(f.path)) shas[f.path] = f.sha;
@@ -307,15 +307,17 @@ export const store = {
         .map((f) => f.path)
         .filter((p) => !this.tombs.has(idFromPath(p)))
         .sort(descByPath);
-      this.remote = { paths, shas, fetchedAt: Date.now() };
+      // truncated 时文件树不完整，不能拿它判断「哪些笔记被删了」
+      this.remote = { paths, shas, fetchedAt: Date.now(), truncated: !!truncated, ok: true };
       await dbMeta.set('remoteTree', this.remote);
       if (!quiet) { this.syncState = 'idle'; this.emit('sync'); }
       this.emit('remote');
       return paths;
     } catch (e) {
       if (e.status === 404) {
-        // 空仓库，还没有任何提交
-        this.remote = { paths: [], shas: {}, fetchedAt: Date.now() };
+        // 空仓库，还没有任何提交（也可能是仓库/分支配错了）——文件树不可信，
+        // 标记 ok=false，避免据此判定「远端删了笔记」
+        this.remote = { paths: [], shas: {}, fetchedAt: Date.now(), ok: false };
         return [];
       }
       this.syncState = 'error';
@@ -387,15 +389,19 @@ export const store = {
   },
 
   /**
-   * 补齐远端比本地多出来的内容：
+   * 把本地状态对齐到远端：
    *   1. 别的设备新写的笔记（比本地最新的还新）
    *   2. 别的设备改过的笔记（远端 sha 与本地记录的不一致，且本地没有待推送的改动）
+   *   3. 别的设备删掉的笔记（本地有、确实推过、远端文件树里已经没有）
    * 更早的笔记仍然交给翻页 loadOlder 处理。
    */
   async pullRemote({ limit = 50 } = {}) {
-    if (!this.gh) return { added: 0, changed: 0 };
+    if (!this.gh) return { added: 0, changed: 0, removed: 0 };
+    let treeFresh = false;
     if (!this.remote.paths.length || Date.now() - (this.remote.fetchedAt || 0) > 30_000) {
-      await this.refreshTree({ quiet: true }).catch(() => {});
+      try { await this.refreshTree({ quiet: true }); treeFresh = true; } catch { treeFresh = false; }
+    } else {
+      treeFresh = true;
     }
     const shas = this.remote.shas || {};
     const byId = new Map(this.notes.map((n) => [n.id, n]));
@@ -416,8 +422,27 @@ export const store = {
       if (local.sha && remoteSha && local.sha !== remoteSha) changed.push(p);
     }
 
+    // 3. 远端删掉的笔记：本地留着、确实推上去过（remote=true）、没有待推送改动，
+    //    但远端文件树里已经没有这个 id
+    let nRemoved = 0;
+    const treeUsable = treeFresh && this.remote.ok !== false && !this.remote.truncated;
+    if (treeUsable) {
+      const remoteIds = new Set(this.remote.paths.map(idFromPath));
+      const gone = this.notes.filter((n) => n.remote && !n.pending && !n.deletingPending
+        && !this.tombs.has(n.id) && !remoteIds.has(n.id));
+      for (const n of gone) {
+        await this.removeLocal(n);
+        delete this.remote.shas[this.notePath(n.id)];
+        nRemoved++;
+      }
+      if (nRemoved) {
+        await dbMeta.set('remoteTree', this.remote).catch(() => {});
+        this.emit('change');
+      }
+    }
+
     const todo = added.slice(0, limit).concat(changed.slice(0, limit));
-    if (!todo.length) return { added: 0, changed: 0 };
+    if (!todo.length) return { added: 0, changed: 0, removed: nRemoved };
 
     const fetched = [];
     await mapLimit(todo, 3, async (p) => {
@@ -434,7 +459,7 @@ export const store = {
         console.warn('pull note failed', p, e);
       }
     });
-    if (!fetched.length) return { added: 0, changed: 0 };
+    if (!fetched.length) return { added: 0, changed: 0, removed: nRemoved };
 
     await dbNotes.putMany(fetched);
     let nAdded = 0;
@@ -446,7 +471,7 @@ export const store = {
     }
     this.notes.sort((a, b) => (a.id < b.id ? 1 : -1));
     this.emit('change');
-    return { added: nAdded, changed: nChanged };
+    return { added: nAdded, changed: nChanged, removed: nRemoved };
   },
 
   /** 拉取全部远端笔记（不含媒体二进制） */
