@@ -1,23 +1,36 @@
 // 版本更新：让装在桌面上的 PWA 尽快跟上线上部署
 //
 // 手机上的 PWA 常年挂在后台不退出，光等「下次启动」会把新版本压在旧界面后面很久。
-// 这里叠了三层：
+// 这里叠了四层：
 //   1. 部署标记比对 —— 记住打开时的 version.json 提交号，回到前台 / 联网 /
 //      定时（90 秒）各比对一次，发现线上变了就刷新
 //   2. Service Worker 自检 —— 回到前台、联网时让浏览器去取一次 sw.js
 //   3. 接管即刷新 —— 新 SW 接管后重载页面
+//   4. 手动按钮 —— 设置里「更新到最新版本」，立即比对并强制重载
 // 重载前会看有没有正在写的笔记，避免吞掉用户没发布的内容。
 
+let active = null;
+
+// 设置面板等处需要拿到当前这个实例
+export function getUpdater() {
+  return active;
+}
+
+// 版本号形如 { sha: '93cab8d…', app: 'v1.5' }；sha 用来判断，app 用来显示
+export function shortSha(sha) {
+  return sha ? String(sha).slice(0, 7) : '';
+}
+
 export function createUpdater({
-  readSha,          // () => Promise<string|null>
-  notify = () => {}, // 提示文案
+  readVersion,        // () => Promise<{sha, app}|null>
+  notify = () => {},  // 提示文案
   busy = () => false, // 是否正在编辑，不能打断
   reload = () => location.reload(),
   pollMs = 90_000,
   swCheckMs = 15 * 60 * 1000,
   setTimer = setInterval,
 }) {
-  const state = { sha: null };
+  const state = { sha: null, app: null };
   let pending = false;
   let reloading = false;
   let reg = null;
@@ -43,10 +56,10 @@ export function createUpdater({
   async function check() {
     if (reloading) return;
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-    const sha = await readSha();
-    if (!sha) return;                       // 离线或读不到，这轮跳过
-    if (!state.sha) { state.sha = sha; return; } // 启动时没读到，这轮补基线
-    if (sha !== state.sha) schedule();
+    const v = await readVersion();
+    if (!v || !v.sha) return;                            // 离线或读不到，这轮跳过
+    if (!state.sha) { state.sha = v.sha; state.app = v.app; return; } // 补基线
+    if (v.sha !== state.sha) schedule();
   }
 
   function checkSW(force) {
@@ -62,8 +75,44 @@ export function createUpdater({
     if (pending && !busy()) schedule();
   }
 
+  // 只读一次线上版本，不改变基线 —— 给设置面板显示用
+  async function peek() {
+    return readVersion();
+  }
+
+  async function clearShellCaches() {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys.filter((k) => k.startsWith('notestream-shell-')).map((k) => caches.delete(k)),
+      );
+    } catch { /* 无 Cache Storage 时忽略 */ }
+  }
+
+  // 设置里的「更新到最新版本」：立即比对，有新版就重载；没有就顺手清一次界面缓存
+  async function forceUpdate(onStage = () => {}) {
+    onStage('检查中…');
+    const v = await readVersion().catch(() => null);
+    const same = !!(v && v.sha && state.sha && v.sha === state.sha);
+
+    if (same) {
+      onStage('整理本地缓存…');
+      await clearShellCaches();
+      return { updated: false, version: v };
+    }
+
+    onStage('正在更新…');
+    await clearShellCaches();
+    if (reg) await reg.update().catch(() => {});
+    reloading = true;
+    setTimeout(reload, 250);
+    return { updated: true, version: v };
+  }
+
   async function init() {
-    state.sha = await readSha();
+    const first = await readVersion().catch(() => null);
+    state.sha = first && first.sha ? first.sha : null;
+    state.app = first && first.app ? first.app : null;
 
     const supported = typeof navigator !== 'undefined' && 'serviceWorker' in navigator
       && typeof location !== 'undefined' && location.protocol.startsWith('http');
@@ -104,13 +153,18 @@ export function createUpdater({
     }, pollMs);
   }
 
-  return {
+  const api = {
     init,
     check,
     checkSW,
     settle,
     schedule,
+    peek,
+    forceUpdate,
     get sha() { return state.sha; },
+    get app() { return state.app; },
     get pending() { return pending; },
   };
+  if (!active) active = api;
+  return api;
 }
