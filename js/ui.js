@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.7';
+const APP_VERSION = 'v1.8';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -159,9 +159,12 @@ async function manualSync() {
     const pulled = await store.pullRemote();
     renderFeed();
     const pending = store.pendingCount();
+    const parts = [];
+    if (pulled.added) parts.push(`新增 ${pulled.added} 条`);
+    if (pulled.changed) parts.push(`更新 ${pulled.changed} 条`);
+    if (pulled.removed) parts.push(`删掉 ${pulled.removed} 条`);
     if (pending) toast(`${pending} 条没推上去，稍后会自动重试`);
-    else if (pulled.added) toast(`已同步，新增 ${pulled.added} 条`);
-    else if (pulled.changed) toast(`已同步，更新 ${pulled.changed} 条`);
+    else if (parts.length) toast(`已同步，${parts.join('，')}`);
     else toast('已和 GitHub 同步');
   } catch (e) {
     toast(`同步失败：${e.message || '网络异常'}`);
@@ -1141,9 +1144,9 @@ async function renderSettings() {
     toast('同步中…');
     await store.flushQueue();
     await store.refreshTree({ quiet: true }).catch(() => {});
-    const pulled = await store.pullRemote().catch(() => ({ added: 0, changed: 0 }));
+    const pulled = await store.pullRemote().catch(() => ({ added: 0, changed: 0, removed: 0 }));
     await renderSettings();
-    const fresh = (pulled.added || 0) + (pulled.changed || 0);
+    const fresh = (pulled.added || 0) + (pulled.changed || 0) + (pulled.removed || 0);
     toast(fresh ? `同步完成，更新 ${fresh} 条` : '同步完成，没有新内容');
   });
   $('#set-pull').addEventListener('click', async (e) => {
