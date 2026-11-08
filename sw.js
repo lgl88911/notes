@@ -1,4 +1,4 @@
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
 const MEDIA_CACHE = 'notestream-media';
 const MEDIA_MAX_ENTRIES = 260;
@@ -49,22 +49,26 @@ self.addEventListener('fetch', (e) => {
   }
 
   if (url.origin === location.origin) {
-    if (req.mode === 'navigate') {
-      e.respondWith((async () => {
-        try {
-          const fresh = await fetch(req);
-          const cache = await caches.open(SHELL_CACHE);
-          cache.put('./index.html', fresh.clone());
-          return fresh;
-        } catch {
-          return (await caches.match('./index.html')) || Response.error();
-        }
-      })());
-      return;
-    }
-    e.respondWith(staleWhileRevalidate(req, SHELL_CACHE));
+    // 界面文件一律「先网络、失败才用缓存」：改了代码下次打开就是新的，
+    // 离线时仍然能打开。之前用 stale-while-revalidate，会先吐旧文件，
+    // 于是手机上经常看到上一版的界面。
+    e.respondWith(networkFirst(req, SHELL_CACHE));
   }
 });
+
+async function networkFirst(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  try {
+    const res = await fetch(req);
+    if (res.ok) cache.put(req, res.clone());
+    return res;
+  } catch {
+    const hit = await cache.match(req);
+    if (hit) return hit;
+    const shell = await cache.match('./index.html');
+    return shell || new Response('', { status: 504 });
+  }
+}
 
 async function cacheFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
@@ -80,16 +84,6 @@ async function cacheFirst(req, cacheName) {
   } catch {
     return new Response('', { status: 504 });
   }
-}
-
-async function staleWhileRevalidate(req, cacheName) {
-  const cache = await caches.open(cacheName);
-  const hit = await cache.match(req);
-  const network = fetch(req).then((res) => {
-    if (res.ok) cache.put(req, res.clone());
-    return res;
-  }).catch(() => hit);
-  return hit || network;
 }
 
 async function trim(cache) {

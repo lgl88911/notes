@@ -9,6 +9,7 @@ import {
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
 
 const els = {};
+const APP_VERSION = 'v1.1';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -92,6 +93,7 @@ export function initUI() {
     searchInput: $('#search-input'),
     settings: $('#settings'),
     settingsBody: $('#settings-body'),
+    syncBtn: $('#btn-sync'),
   });
 
   wireTopbar();
@@ -122,8 +124,34 @@ function onStoreEvent(type, data) {
 /* ==================== 顶栏 ==================== */
 
 function wireTopbar() {
+  $('#btn-sync').addEventListener('click', manualSync);
   $('#btn-search').addEventListener('click', openSearch);
   $('#btn-settings').addEventListener('click', openSettings);
+}
+
+let syncBusy = false;
+
+async function manualSync() {
+  if (!store.hasConfig()) { toast('先完成仓库配置'); return; }
+  if (syncBusy) return;
+  syncBusy = true;
+  haptic(6);
+  els.syncBtn.classList.add('is-spinning');
+  try {
+    // 先把手上的改动推上去，再拉一次仓库的文件树，两边的状态就对上了
+    await store.flushQueue();
+    await store.refreshTree({ quiet: true });
+    renderFeed();
+    const pending = store.pendingCount();
+    if (pending) toast(`${pending} 条没推上去，稍后会自动重试`);
+    else toast('已和 GitHub 同步');
+  } catch (e) {
+    toast(`同步失败：${e.message || '网络异常'}`);
+  } finally {
+    syncBusy = false;
+    els.syncBtn.classList.remove('is-spinning');
+    updateChip();
+  }
 }
 
 function updateChip() {
@@ -137,6 +165,7 @@ function updateChip() {
   chip.hidden = false;
   chip.classList.toggle('is-syncing', syncing);
   chip.classList.toggle('is-error', error);
+  if (els.syncBtn) els.syncBtn.classList.toggle('is-spinning', syncBusy || syncing);
 
   if (error && store.syncMessage) chip.textContent = '同步失败';
   else if (syncing) chip.textContent = '同步中';
@@ -1005,11 +1034,12 @@ async function renderSettings() {
 
     <div class="set-group">
       <div class="set-group-title">其他</div>
-      <div class="set-actions" style="flex-direction:column;align-items:stretch">
-        <button class="btn-ghost btn-danger-ghost" id="set-wipe">清空本地全部缓存</button>
+      <div class="set-actions">
+        <button class="btn-ghost" id="set-refresh">检查更新</button>
+        <button class="btn-ghost btn-danger-ghost" id="set-wipe">清空本地缓存</button>
       </div>
-      <div class="set-hint">不会动仓库里的任何文件。清空后滑动翻页会重新从 GitHub 拉取。</div>
-      <div class="set-row" style="margin-top:14px"><span class="k">版本</span><span class="v">v1.0 · PWA</span></div>
+      <div class="set-hint">「检查更新」只重装界面文件并重载，笔记和令牌不受影响；「清空本地缓存」删掉手机上的笔记副本，往下翻页会重新从 GitHub 拉取。两个都不会动仓库。</div>
+      <div class="set-row" style="margin-top:14px"><span class="k">版本</span><span class="v">${APP_VERSION} · PWA</span></div>
       <div class="set-row"><span class="k">数据位置</span><span class="v">github.com/${esc(cfg.owner || '')}/${esc(cfg.repo || '')}</span></div>
     </div>`;
 
@@ -1061,6 +1091,20 @@ async function renderSettings() {
     renderFeed();
     renderSettings();
     toast('本地缓存已清空');
+  });
+  $('#set-refresh').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = '刷新中…';
+    try {
+      const reg = navigator.serviceWorker ? await navigator.serviceWorker.getRegistration() : null;
+      if (reg) await reg.update().catch(() => {});
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => k.startsWith('notestream-shell-')).map((k) => caches.delete(k)));
+    } catch (err) {
+      console.warn('refresh failed', err);
+    }
+    location.reload();
   });
 }
 

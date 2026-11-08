@@ -94,6 +94,9 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
   transition: background .15s;
 }
 .icon-btn:active { background: var(--line-soft); }
+/* 同步按钮：同步中让箭头转起来 */
+.icon-btn.is-spinning { color: var(--accent); }
+.icon-btn.is-spinning svg { animation: spin .9s linear infinite; }
 
 @keyframes pulse { 50% { opacity: .25; } }
 
