@@ -19,19 +19,43 @@
 - **一条笔记一个文件**。Git 历史里能看清楚每次改动，删除时只动对应那一个文件。
 - **媒体同仓库**。图片上传前压成 WebP（长边 1600），音频用 opus 录音，视频限 25MB 以内。
 
-## 部署
+## 部署并装到手机
+
+这个 App 没有构建步骤，一个仓库同时当数据仓库和站点仓库。
 
 1. 建一个**公开**仓库（比如 `notes`）。
-2. 把这个目录推到仓库根目录（`main` 分支）。
-3. 仓库 Settings → Pages → Source 选 **GitHub Actions**（或直接用 `Deploy static content to Pages` 模板，仓库里已带 `.github/workflows/pages.yml`）。
-4. 手机上打开 `https://<用户名>.github.io/<仓库名>/`，Safari 点分享 → 添加到主屏幕，Chrome 点菜单 → 安装应用。
-5. 首次打开填入仓库和令牌：
+2. 推到仓库根目录（`main` 分支）：
+   ```bash
+   git remote add origin git@github.com:<用户名>/notes.git
+   git push -u origin main
+   ```
+3. 仓库 Settings → Pages → Source 选 **GitHub Actions**。仓库里已带 `.github/workflows/pages.yml`，推完自动部署，地址是 `https://<用户名>.github.io/notes/`。
+4. 手机 Chrome 打开这个地址 → 菜单 → **安装应用**（或「添加到主屏幕」）。桌面出现图标，点开是全屏无地址栏的独立窗口。
+5. 首次打开填三项：用户名、仓库名、令牌。令牌这样拿：
    - GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens**
-   - Repository access 选 Only select repositories，勾选这个笔记仓库
+   - Repository access 选 Only select repositories，勾选笔记仓库
    - Permissions → Repository permissions → **Contents: Read and write**
 6. 点「连接并开始」。
 
 令牌只存在手机浏览器的 IndexedDB 里，不经过任何第三方服务器。
+
+### 关于「安装应用」入口
+
+浏览器只在 **HTTPS 或 localhost** 下才把它当成可安装的应用，所以：
+
+- 必须用 Pages 的 `https://` 地址，局域网 `http://192.168.x.x` 装不了。
+- 手机 Chrome 菜单里没有「安装应用」时，先确认页面是从 HTTPS 打开的；再打开右上角「⋮」→「添加到主屏幕」，效果相同。
+- 没有 Google 服务框架的国产手机，Chrome 可能只生成普通快捷方式（点开会带地址栏）。这种情况改用 Capacitor 打成 APK 更稳。
+
+### 不部署，只想先在手机上试试
+
+用数据线连手机，开 USB 调试，然后在电脑上：
+
+```bash
+adb reverse tcp:8765 tcp:8765
+```
+
+手机 Chrome 访问 `http://localhost:8765` 即可（localhost 算安全上下文，Service Worker 能注册）。这条命令每次插线都要重跑。
 
 ## 用起来
 
