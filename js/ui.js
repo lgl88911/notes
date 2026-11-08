@@ -7,9 +7,10 @@ import {
   pad, toast, haptic, debounce, isoLocal,
 } from './util.js';
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
+import { getUpdater, shortSha } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.5';
+const APP_VERSION = 'v1.6';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -1072,6 +1073,8 @@ async function renderSettings() {
   const pending = store.pendingCount();
   const missing = store.missingCount();
   const threeMonthsAgo = new Date(Date.now() - 90 * 86400000);
+  const updater = getUpdater();
+  const updaterSha = updater ? updater.sha : null;
 
   const body = els.settingsBody;
   body.innerHTML = `
@@ -1112,13 +1115,14 @@ async function renderSettings() {
     </div>
 
     <div class="set-group">
-      <div class="set-group-title">其他</div>
-      <div class="set-actions">
-        <button class="btn-ghost" id="set-refresh">检查更新</button>
+      <div class="set-group-title">版本</div>
+      <div class="set-row"><span class="k">当前版本</span><span class="v">${APP_VERSION} · ${shortSha(updaterSha) || '未知'}</span></div>
+      <div class="set-row"><span class="k">线上最新</span><span class="v" id="set-latest-ver">检查中…</span></div>
+      <div class="set-actions" style="flex-direction:column;align-items:stretch">
+        <button class="btn-ghost" id="set-update">更新到最新版本</button>
         <button class="btn-ghost btn-danger-ghost" id="set-wipe">清空本地缓存</button>
       </div>
-      <div class="set-hint">「检查更新」只重装界面文件并重载，笔记和令牌不受影响；「清空本地缓存」删掉手机上的笔记副本，往下翻页会重新从 GitHub 拉取。两个都不会动仓库。</div>
-      <div class="set-row" style="margin-top:14px"><span class="k">版本</span><span class="v">${APP_VERSION} · PWA</span></div>
+      <div class="set-hint" id="set-update-hint">「更新到最新版本」会立即和线上比对，有新版就重新下载界面文件并重载；平时打开应用也会自动检查。<br>「清空本地缓存」删掉手机上的笔记副本，往下翻页会重新从 GitHub 拉取。两个都不会动仓库。</div>
       <div class="set-row"><span class="k">数据位置</span><span class="v">github.com/${esc(cfg.owner || '')}/${esc(cfg.repo || '')}</span></div>
     </div>`;
 
@@ -1171,19 +1175,46 @@ async function renderSettings() {
     renderSettings();
     toast('本地缓存已清空');
   });
-  $('#set-refresh').addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.textContent = '刷新中…';
-    try {
-      const reg = navigator.serviceWorker ? await navigator.serviceWorker.getRegistration() : null;
-      if (reg) await reg.update().catch(() => {});
-      const keys = await caches.keys();
-      await Promise.all(keys.filter((k) => k.startsWith('notestream-shell-')).map((k) => caches.delete(k)));
-    } catch (err) {
-      console.warn('refresh failed', err);
+  // 线上版本：打开设置时顺手查一次，标出有没有新版
+  (async () => {
+    const label = $('#set-latest-ver');
+    if (!label) return;
+    const up = getUpdater();
+    const remote = up ? await up.peek().catch(() => null) : null;
+    if (!remote || !remote.sha) {
+      label.textContent = navigator.onLine ? '读取失败，可点下方按钮重试' : '离线';
+      return;
     }
-    location.reload();
+    const latest = remote.app ? `${remote.app} · ${shortSha(remote.sha)}` : shortSha(remote.sha);
+    if (up && up.sha && remote.sha === up.sha) {
+      label.textContent = `${latest}（已是最新）`;
+    } else {
+      label.innerHTML = `<b style="color:var(--accent)">${esc(latest)}（有新版本）</b>`;
+    }
+  })();
+
+  $('#set-update').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const up = getUpdater();
+    const hint = $('#set-update-hint');
+    if (!up) {
+      // 极端情况下更新模块没起来（比如 SW 未注册），退回最朴素的做法
+      if (typeof location !== 'undefined') location.reload();
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '检查中…';
+    const res = await up.forceUpdate((stage) => { btn.textContent = stage; });
+    if (res && res.updated) {
+      btn.textContent = '正在更新…';
+      if (hint) hint.textContent = '发现新版本，正在重新载入…';
+      return; // forceUpdate 内部会 reload
+    }
+    btn.disabled = false;
+    btn.textContent = '更新到最新版本';
+    const ver = res && res.version;
+    toast(ver && ver.app ? `已是最新版本：${ver.app}` : '已是最新版本');
+    if (hint) hint.textContent = '已重新核对线上版本，当前就是最新。';
   });
 }
 

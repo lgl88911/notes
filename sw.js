@@ -1,4 +1,4 @@
-const VERSION = 'v8';
+const VERSION = 'v9';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
 const MEDIA_CACHE = 'notestream-media';
 const MEDIA_MAX_ENTRIES = 260;

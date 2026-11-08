@@ -50,7 +50,7 @@ async function boot() {
   });
 
   const updater = createUpdater({
-    readSha: readDeploySha,
+    readVersion,
     notify: (msg) => toast(msg),
     busy: composerBusy,
   });
@@ -62,10 +62,10 @@ async function boot() {
   });
 }
 
-function readDeploySha() {
+function readVersion() {
   return fetch(`./version.json?t=${Date.now()}`, { cache: 'no-store' })
     .then((res) => (res.ok ? res.json() : null))
-    .then((data) => (data && data.sha ? String(data.sha) : null))
+    .then((data) => (data && data.sha ? { sha: String(data.sha), app: data.app || null } : null))
     .catch(() => null);
 }
 
