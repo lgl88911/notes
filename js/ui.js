@@ -9,7 +9,7 @@ import {
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
 
 const els = {};
-const APP_VERSION = 'v1.1';
+const APP_VERSION = 'v1.2';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -17,19 +17,25 @@ let recorder = null;
 let recTimer = 0;
 
 /* ==================== 层级与返回键 ==================== */
-// 靠一条常驻的「哨兵」历史记录把硬件返回键截下来：
-// 面板打开时，返回只关最上面那一层，并立刻补回哨兵；
-// 没有任何面板时再按返回，才真正退出应用。
+// 每打开一个面板，就在历史里压一条真实条目（此时一定在点击事件里，带用户手势）。
+// 返回键 / 浏览器后退按钮退掉这条条目 → popstate → 关掉最上面一层。
+// 面板由界面按钮关闭时，用 history.back() 把多压的那条还回去，历史上不留垃圾。
+//
+// 不能像早先那样在页面加载时先压一条常驻「哨兵」再靠补哨兵续命：
+// Chrome 的 History Manipulation Intervention 会把「无用户手势创建的条目」
+// 标成 skippable，点桌面版后退按钮时会整页跳过、popstate 都不触发，
+// 表现就是「直接退出应用」。只在手势里压条目就没有这个问题，
+// 而且 history.back() 的调用不受该机制影响，两端行为一致。
 
 const layers = [];
-let guardReady = false;
-let lastExitAttempt = 0;
+let pendingPops = 0;   // 我们自己发起、还没到达的 popstate 次数
+let armPending = 0;    // 因为 pop 在途中而推迟压入的历史条目数
 
-function ensureGuard() {
-  if (guardReady) return;
-  guardReady = true;
-  if (window.history.state && window.history.state.nsGuard) return;
-  try { window.history.pushState({ nsGuard: true }, ''); } catch { /* 无痕模式等场景忽略 */ }
+function pushLayerEntry() {
+  // pop 在途时立刻 pushState 会和浏览器自己的遍历抢历史栈，
+  // 先记账，等那次 pop 落定再压。
+  if (pendingPops > 0) { armPending++; return; }
+  try { window.history.pushState({ nsLayer: layers.length }, ''); } catch { /* 无痕模式等忽略 */ }
 }
 
 function layerOpened(name, close) {
@@ -37,36 +43,44 @@ function layerOpened(name, close) {
   // 同一层重复打开（比如编辑器里又触发一次）不叠加，只更新关闭逻辑
   if (top && top.name === name) { top.close = close; return; }
   layers.push({ name, close });
-  ensureGuard();
+  pushLayerEntry();
+}
+
+function goBackOne() {
+  pendingPops++;
+  try {
+    window.history.back();
+  } catch {
+    pendingPops--;
+    if (armPending > 0) { armPending--; pushLayerEntry(); }
+  }
 }
 
 function layerClose() {
   const top = layers.pop();
   if (!top) return false;
   try { top.close(); } catch (e) { console.warn('close layer failed', top.name, e); }
+  goBackOne();
   return true;
 }
 
 // 已经自行收起、但需要把层从栈里摘掉（避免多占一次返回）
 function layerForget(name) {
   const top = layers[layers.length - 1];
-  if (top && top.name === name) layers.pop();
+  if (top && top.name === name) { layers.pop(); goBackOne(); }
 }
 
 window.addEventListener('popstate', () => {
-  const top = layers[layers.length - 1];
-  if (!top) {
-    // 没有面板：让返回真的退出应用。500ms 内只退一步，避免连锁回退跳过页面
-    const now = Date.now();
-    if (now - lastExitAttempt < 500) return;
-    lastExitAttempt = now;
-    try { window.history.back(); } catch { /* ignore */ }
+  // 这次 pop 是我们自己 back() 出来的：条目已经还回去了，不用再关层
+  if (pendingPops > 0) {
+    pendingPops--;
+    if (armPending > 0) { armPending--; pushLayerEntry(); }
     return;
   }
+  const top = layers[layers.length - 1];
+  if (!top) return; // 没有面板时放行：让浏览器按默认行为后退
   layers.pop();
   try { top.close(); } catch (e) { console.warn('close layer failed', top.name, e); }
-  // 哨兵被吃掉了，补一条回去，下一次返回还能拦
-  try { window.history.pushState({ nsGuard: true }, ''); } catch { /* ignore */ }
 });
 
 
@@ -108,7 +122,6 @@ export function initUI() {
   store.on(onStoreEvent);
   renderFeed();
   updateChip();
-  ensureGuard();
 }
 
 function onStoreEvent(type, data) {
