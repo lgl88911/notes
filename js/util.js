@@ -93,8 +93,10 @@ export function escapeReg(s) {
 }
 
 /* ==================== 正文里的媒体直链 ==================== */
-// 只认「明确带扩展名的 http(s) 直链」，不猜页面地址：
-// 普通网页链接（bilibili、YouTube、图床页面）只当链接，塞进 <video> 只会变成坏播放器。
+// 两类链接会就地渲染：
+//   1) 带扩展名的直链（.jpg / .mp4 / .mp3 ……），直接交给 img/video/audio；
+//   2) 已知视频平台的播放页（YouTube / Vimeo / 哔哩哔哩），换成官方播放器的 iframe。
+// 其余网页链接只当链接——把页面地址塞进 <video> 只会得到转圈不播的空壳。
 
 // 中文标点不算 URL 的一部分：直接贴链接时后面常跟「，」「。」，不排除会被吞进来
 const URL_RE = /https?:\/\/[^\s<>"'）)，。；：！？、”’】》]+/g;
@@ -141,6 +143,70 @@ export function findMediaLinks(text) {
     if (!t) continue;
     seen.add(url);
     out.push({ url, t });
+  }
+  return out;
+}
+
+/* ---------- 视频平台播放页 → 官方播放器 ---------- */
+
+const YT_ID = /^[A-Za-z0-9_-]{6,}$/;
+
+function yt(id) {
+  if (!id || !YT_ID.test(id)) return null;
+  return { platform: 'youtube', id, src: `https://www.youtube-nocookie.com/embed/${id}?rel=0` };
+}
+
+/**
+ * 把已知平台的播放页地址转成可嵌入的播放器地址。
+ * 认不出就返回 null——宁可不渲染，也不给一个打不开的播放器。
+ */
+export function embedOf(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  const host = u.hostname.toLowerCase().replace(/^(www|m|mobile)\./, '');
+  const path = u.pathname;
+
+  if (host === 'youtu.be') return yt(path.split('/')[1] || '');
+
+  if (host === 'youtube.com' || host === 'music.youtube.com' || host === 'youtube-nocookie.com') {
+    if (/^\/watch\/?$/.test(path)) return yt(u.searchParams.get('v') || '');
+    const m = path.match(/^\/(?:shorts|embed|live|v)\/([A-Za-z0-9_-]{6,})/);
+    return m ? yt(m[1]) : null;
+  }
+
+  if (host === 'vimeo.com') {
+    const m = path.match(/^\/(\d{6,})/);
+    if (!m) return null;
+    return { platform: 'vimeo', id: m[1], src: `https://player.vimeo.com/video/${m[1]}` };
+  }
+
+  if (host === 'bilibili.com' || host.endsWith('.bilibili.com')) {
+    const m = path.match(/\/video\/(BV[0-9A-Za-z]{8,})/);
+    if (!m) return null;
+    return {
+      platform: 'bilibili',
+      id: m[1],
+      src: `https://player.bilibili.com/player.html?bvid=${m[1]}&autoplay=0&high_quality=1`,
+    };
+  }
+
+  return null;
+}
+
+/** 抽出正文里可嵌入的播放页，按出现顺序去重 */
+export function findEmbedLinks(text) {
+  if (!text || typeof text !== 'string' || text.indexOf('http') < 0) return [];
+  const out = [];
+  const seen = new Set();
+  for (const m of text.matchAll(URL_RE)) {
+    const url = trimUrl(m[0]);
+    if (!url || seen.has(url)) continue;
+    if (mediaTypeOf(url)) continue; // 已经是直链，交给 img/video/audio
+    const e = embedOf(url);
+    if (!e) continue;
+    seen.add(url);
+    out.push({ url, ...e });
   }
   return out;
 }
