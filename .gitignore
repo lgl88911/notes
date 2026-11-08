@@ -3,6 +3,9 @@ Thumbs.db
 *.log
 node_modules/
 
+# 工作区内部数据，不进公开仓库
+.workbuddy/
+
 # 编辑器
 .vscode/
 .idea/
