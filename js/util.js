@@ -75,7 +75,7 @@ export function fmtDateShort(d) {
 /** 文本转义 + 自动识别链接 + 关键词高亮 */
 export function renderText(text, keyword) {
   let html = esc(text);
-  html = html.replace(/(https?:\/\/[^\s<>"）)]+)/g, (m) => {
+  html = html.replace(URL_RE, (m) => {
     const short = m.replace(/^https?:\/\//, '');
     const label = short.length > 42 ? short.slice(0, 40) + '…' : short;
     return `<a href="${m}" target="_blank" rel="noopener noreferrer">${label}</a>`;
@@ -90,6 +90,59 @@ export function renderText(text, keyword) {
 
 export function escapeReg(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/* ==================== 正文里的媒体直链 ==================== */
+// 只认「明确带扩展名的 http(s) 直链」，不猜页面地址：
+// 普通网页链接（bilibili、YouTube、图床页面）只当链接，塞进 <video> 只会变成坏播放器。
+
+// 中文标点不算 URL 的一部分：直接贴链接时后面常跟「，」「。」，不排除会被吞进来
+const URL_RE = /https?:\/\/[^\s<>"'）)，。；：！？、”’】》]+/g;
+const MEDIA_EXT = {
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp'],
+  video: ['mp4', 'm4v', 'webm', 'ogv', 'mov'],
+  audio: ['mp3', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac'],
+};
+const EXT_TYPE = new Map();
+for (const [t, list] of Object.entries(MEDIA_EXT)) for (const e of list) EXT_TYPE.set(e, t);
+
+/** 去掉粘在链接末尾的中英文标点 */
+function trimUrl(url) {
+  return url.replace(/[.,;:!?，。；：！？、]+$/, '');
+}
+
+function extOf(url) {
+  try {
+    const p = new URL(url).pathname.toLowerCase();
+    const m = p.match(/\.([a-z0-9]{2,5})$/);
+    return m ? m[1] : '';
+  } catch {
+    return '';
+  }
+}
+
+export function mediaTypeOf(url) {
+  return EXT_TYPE.get(extOf(url)) || '';
+}
+
+/**
+ * 抽出正文里的媒体直链。
+ * 返回 [{ url, t: 'image' | 'video' | 'audio' }]，按出现顺序，重复的只留一次。
+ * 同一个地址既当图片又当音频的情况不存在，扩展名唯一决定类型。
+ */
+export function findMediaLinks(text) {
+  if (!text || typeof text !== 'string' || text.indexOf('http') < 0) return [];
+  const out = [];
+  const seen = new Set();
+  for (const m of text.matchAll(URL_RE)) {
+    const url = trimUrl(m[0]);
+    if (!url || seen.has(url)) continue;
+    const t = mediaTypeOf(url);
+    if (!t) continue;
+    seen.add(url);
+    out.push({ url, t });
+  }
+  return out;
 }
 
 export function sleep(ms) {

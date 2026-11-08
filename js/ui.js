@@ -3,13 +3,13 @@
 import { store } from './store.js';
 import { notes as dbNotes, blobs as dbBlobs, meta as dbMeta, storageEstimate } from './db.js';
 import {
-  $, $$, esc, renderText, fmtTime, fmtDayLabel, dayKey, fmtDur, fmtBytes, fmtDateShort,
+  $, $$, esc, renderText, findMediaLinks, fmtTime, fmtDayLabel, dayKey, fmtDur, fmtBytes, fmtDateShort,
   pad, toast, haptic, debounce, isoLocal,
 } from './util.js';
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
 
 const els = {};
-const APP_VERSION = 'v1.2';
+const APP_VERSION = 'v1.3';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -299,8 +299,41 @@ function noteHTML(n, keyword) {
       </button>
     </div>
     ${text}
+    ${linkMediaHTML(n.text)}
     ${mediaHTML(n)}
   </article>`;
+}
+
+/* --- 正文里的媒体直链 --- */
+// 图片/视频/音频的直链直接在笔记里渲染出来，不用另外上传；不支持的格式仍只是普通链接。
+function linkMediaHTML(text) {
+  const items = findMediaLinks(text);
+  if (!items.length) return '';
+  const imgs = items.filter((x) => x.t === 'image');
+  const vids = items.filter((x) => x.t === 'video');
+  const auds = items.filter((x) => x.t === 'audio');
+
+  let html = '<div class="link-media">';
+  if (imgs.length) {
+    html += `<div class="ext-grid ${imgs.length === 1 ? 'single' : 'multi'}">`;
+    for (const it of imgs) {
+      html += `<button class="ext-item" data-act="open-ext" data-url="${esc(it.url)}" aria-label="查看图片">
+        <img class="ext-img" src="${esc(it.url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+      </button>`;
+    }
+    html += '</div>';
+  }
+  for (const it of vids) {
+    html += `<video class="ext-player" src="${esc(it.url)}" controls preload="metadata" playsinline referrerpolicy="no-referrer"></video>`;
+  }
+  for (const it of auds) {
+    html += `<div class="ext-audio">
+      <span class="ext-audio-tag">音频</span>
+      <audio src="${esc(it.url)}" controls preload="metadata" referrerpolicy="no-referrer"></audio>
+    </div>`;
+  }
+  html += '</div>';
+  return html;
 }
 
 function mediaHTML(n) {
@@ -432,8 +465,25 @@ function wireFeed() {
       openViewer(nid, k);
     } else if (act.dataset.act === 'play-audio') {
       toggleAudio(act, nid, k);
+    } else if (act.dataset.act === 'open-ext') {
+      openExternalImage(act.dataset.url);
     }
   });
+
+  // 外链图片加载失败（防盗链、链接失效）时退回成可点的普通链接，不留空白块
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!(img instanceof window.HTMLImageElement) || !img.classList.contains('ext-img')) return;
+    const btn = img.closest('[data-url]');
+    if (!btn) return;
+    const a = document.createElement('a');
+    a.className = 'ext-item ext-broken';
+    a.href = btn.dataset.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = '图片无法直接显示，点此打开';
+    btn.replaceWith(a);
+  }, true);
 
   $$('#composer-bar button').forEach((b) => b.addEventListener('click', () => haptic(4)));
 }
@@ -873,6 +923,14 @@ async function openViewer(nid, k) {
 
 function closeViewer() {
   if (!layerClose()) hideViewer();
+}
+
+function openExternalImage(url) {
+  if (!url) return;
+  haptic(5);
+  els.viewer.hidden = false;
+  layerOpened('viewer', hideViewer);
+  els.viewerContent.innerHTML = `<img src="${esc(url)}" alt="" referrerpolicy="no-referrer">`;
 }
 
 function hideViewer() {
