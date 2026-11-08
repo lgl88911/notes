@@ -15,6 +15,60 @@ let composerState = null;
 let recorder = null;
 let recTimer = 0;
 
+/* ==================== 层级与返回键 ==================== */
+// 靠一条常驻的「哨兵」历史记录把硬件返回键截下来：
+// 面板打开时，返回只关最上面那一层，并立刻补回哨兵；
+// 没有任何面板时再按返回，才真正退出应用。
+
+const layers = [];
+let guardReady = false;
+let lastExitAttempt = 0;
+
+function ensureGuard() {
+  if (guardReady) return;
+  guardReady = true;
+  if (window.history.state && window.history.state.nsGuard) return;
+  try { window.history.pushState({ nsGuard: true }, ''); } catch { /* 无痕模式等场景忽略 */ }
+}
+
+function layerOpened(name, close) {
+  const top = layers[layers.length - 1];
+  // 同一层重复打开（比如编辑器里又触发一次）不叠加，只更新关闭逻辑
+  if (top && top.name === name) { top.close = close; return; }
+  layers.push({ name, close });
+  ensureGuard();
+}
+
+function layerClose() {
+  const top = layers.pop();
+  if (!top) return false;
+  try { top.close(); } catch (e) { console.warn('close layer failed', top.name, e); }
+  return true;
+}
+
+// 已经自行收起、但需要把层从栈里摘掉（避免多占一次返回）
+function layerForget(name) {
+  const top = layers[layers.length - 1];
+  if (top && top.name === name) layers.pop();
+}
+
+window.addEventListener('popstate', () => {
+  const top = layers[layers.length - 1];
+  if (!top) {
+    // 没有面板：让返回真的退出应用。500ms 内只退一步，避免连锁回退跳过页面
+    const now = Date.now();
+    if (now - lastExitAttempt < 500) return;
+    lastExitAttempt = now;
+    try { window.history.back(); } catch { /* ignore */ }
+    return;
+  }
+  layers.pop();
+  try { top.close(); } catch (e) { console.warn('close layer failed', top.name, e); }
+  // 哨兵被吃掉了，补一条回去，下一次返回还能拦
+  try { window.history.pushState({ nsGuard: true }, ''); } catch { /* ignore */ }
+});
+
+
 /* ==================== 初始化 ==================== */
 
 export function initUI() {
@@ -46,11 +100,13 @@ export function initUI() {
   wireRecorder();
   wireSearch();
   wireViewer();
+  wireSettings();
   wireScroll();
 
   store.on(onStoreEvent);
   renderFeed();
   updateChip();
+  ensureGuard();
 }
 
 function onStoreEvent(type, data) {
@@ -401,12 +457,14 @@ function openNoteMenu(id) {
   document.body.appendChild(menu);
 
   const close = () => menu.remove();
+  const dismiss = () => { layerForget('menu'); close(); };
+  layerOpened('menu', close);
   menu.addEventListener('click', async (e) => {
-    if (e.target.closest('[data-close]')) return close();
+    if (e.target.closest('[data-close]')) return dismiss();
     const item = e.target.closest('[data-do]');
     if (!item) return;
     const what = item.dataset.do;
-    close();
+    dismiss();
     if (what === 'edit') openComposer({ note });
     if (what === 'copy') {
       try {
@@ -496,9 +554,14 @@ function openComposer({ note = null, attachments = [], text = '' } = {}) {
   updateComposerCount();
   previewExistingMedia();
   document.body.style.overflow = 'hidden';
+  layerOpened('composer', hideComposer);
 }
 
 function closeComposer() {
+  if (!layerClose()) hideComposer();
+}
+
+function hideComposer() {
   els.composer.hidden = true;
   els.composerText.value = '';
   els.attachStrip.innerHTML = '';
@@ -663,6 +726,7 @@ function openRecorder() {
   $('#rec-time').textContent = '00:00';
   $('#rec-toggle').classList.remove('recording');
   document.body.style.overflow = 'hidden';
+  layerOpened('recorder', () => closeRecorder(true));
   toggleRecording(); // 打开即开始
 }
 
@@ -710,8 +774,9 @@ async function finishRecording() {
   const result = await recorder.stop();
   recorder = null;
   clearInterval(recTimer);
+  layerForget('recorder');
   els.recorderEl.hidden = true;
-  document.body.style.overflow = '';
+  document.body.style.overflow = composerState ? 'hidden' : '';
   if (!result || result.dur < 0.4) { toast('录得太短了'); return; }
   const item = {
     k: composerState ? nextMediaKey() : 'm1',
@@ -727,10 +792,11 @@ async function finishRecording() {
 }
 
 function closeRecorder(cancel) {
+  layerForget('recorder');
   if (cancel && recorder) { recorder.cancel(); recorder = null; }
   clearInterval(recTimer);
   els.recorderEl.hidden = true;
-  document.body.style.overflow = '';
+  document.body.style.overflow = composerState ? 'hidden' : '';
 }
 
 /* ==================== 查看器 ==================== */
@@ -749,6 +815,7 @@ async function openViewer(nid, k) {
   if (!m) return;
   haptic(5);
   els.viewer.hidden = false;
+  layerOpened('viewer', hideViewer);
   els.viewerContent.innerHTML = '<div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:#fff"></div>';
   const url = await resolveMediaUrl(note, m);
   if (!url) {
@@ -763,6 +830,10 @@ async function openViewer(nid, k) {
 }
 
 function closeViewer() {
+  if (!layerClose()) hideViewer();
+}
+
+function hideViewer() {
   els.viewer.hidden = true;
   els.viewerContent.innerHTML = '';
 }
@@ -781,10 +852,15 @@ function openSearch() {
   els.searchInput.value = '';
   els.searchBody.innerHTML = '';
   document.body.style.overflow = 'hidden';
+  layerOpened('search', hideSearch);
   setTimeout(() => els.searchInput.focus(), 60);
 }
 
 function closeSearch() {
+  if (!layerClose()) hideSearch();
+}
+
+function hideSearch() {
   els.search.hidden = true;
   document.body.style.overflow = '';
 }
@@ -865,11 +941,17 @@ function wireSettings() {
 
 async function openSettings() {
   els.settings.hidden = false;
+  if (els.settingsBody) els.settingsBody.scrollTop = 0;
   document.body.style.overflow = 'hidden';
+  layerOpened('settings', hideSettings);
   await renderSettings();
 }
 
 function closeSettings() {
+  if (!layerClose()) hideSettings();
+}
+
+function hideSettings() {
   els.settings.hidden = true;
   document.body.style.overflow = '';
 }
@@ -995,6 +1077,14 @@ export function openSetup(editing = false) {
   const setup = $('#setup');
   setup.hidden = false;
   els.app.hidden = true;
+  if (editing) {
+    // 从设置里进来的「修改配置」：返回键应该退回应用，而不是直接退出
+    layerOpened('setup', () => {
+      setup.hidden = true;
+      els.app.hidden = false;
+      document.body.style.overflow = '';
+    });
+  }
   const cfg = store.config || {};
   $('#setup-owner').value = cfg.owner || '';
   $('#setup-repo').value = cfg.repo || '';
@@ -1033,6 +1123,7 @@ export function openSetup(editing = false) {
       }
 
       await store.saveConfig({ owner, repo, branch, token });
+      layerForget('setup');
       setup.hidden = true;
       els.app.hidden = false;
       await store.init();
