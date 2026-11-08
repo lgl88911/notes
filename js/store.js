@@ -19,7 +19,7 @@ export const store = {
   config: null,
   gh: null,
   notes: [],            // 按 id 倒序
-  remote: { paths: [], fetchedAt: 0 },  // 远端所有笔记路径（倒序）
+  remote: { paths: [], shas: {}, fetchedAt: 0 },  // 远端所有笔记路径（倒序）+ 每个文件的 sha
   tombs: new Set(),
   loaded: false,
   syncState: 'idle',    // idle | syncing | error
@@ -68,11 +68,13 @@ export const store = {
     this.notes = list.sort((a, b) => (a.id < b.id ? 1 : -1));
     this.loaded = true;
     this.emit('load');
-    // 后台刷新远端文件树；本地空但仓库有数据时（换设备/清过缓存）先拉一页回来
+    // 后台刷新远端文件树；顺便把别的设备新写/改过的笔记拉回来
     this.refreshTree({ quiet: true })
       .then(async () => {
         if (!this.notes.length && this.remote.paths.length) {
           await this.loadOlder(PAGE_SIZE);
+        } else {
+          await this.pullRemote().catch(() => {});
         }
       })
       .catch(() => {});
@@ -275,14 +277,18 @@ export const store = {
     }
     // 2. 再写笔记本体
     const md = this.toMarkdown(note);
-    await this.gh.putFile(this.notePath(note.id), md, `note: ${note.id}`);
+    const res = await this.gh.putFile(this.notePath(note.id), md, `note: ${note.id}`);
     note.pending = false;
     note.remote = true;
-    if (!this.remote.paths.includes(this.notePath(note.id))) {
-      this.remote.paths.push(this.notePath(note.id));
+    // 记下这次的 sha，下次同步时才能分辨「远端被人改过」和「就是我自己刚写的」
+    note.sha = (res && res.sha) || null;
+    const path = this.notePath(note.id);
+    if (!this.remote.paths.includes(path)) {
+      this.remote.paths.push(path);
       this.remote.paths.sort(descByPath);
-      dbMeta.set('remoteTree', this.remote).catch(() => {});
     }
+    if (note.sha) this.remote.shas = { ...this.remote.shas, [path]: note.sha };
+    dbMeta.set('remoteTree', this.remote).catch(() => {});
   },
 
   /* ==================== 远端文件树 ==================== */
@@ -292,12 +298,16 @@ export const store = {
     if (!quiet) { this.syncState = 'syncing'; this.emit('sync'); }
     try {
       const { files } = await this.gh.tree();
+      const shas = {};
+      for (const f of files) {
+        if (NOTE_PATH_RE.test(f.path)) shas[f.path] = f.sha;
+      }
       const paths = files
         .filter((f) => NOTE_PATH_RE.test(f.path))
         .map((f) => f.path)
         .filter((p) => !this.tombs.has(idFromPath(p)))
         .sort(descByPath);
-      this.remote = { paths, fetchedAt: Date.now() };
+      this.remote = { paths, shas, fetchedAt: Date.now() };
       await dbMeta.set('remoteTree', this.remote);
       if (!quiet) { this.syncState = 'idle'; this.emit('sync'); }
       this.emit('remote');
@@ -305,7 +315,7 @@ export const store = {
     } catch (e) {
       if (e.status === 404) {
         // 空仓库，还没有任何提交
-        this.remote = { paths: [], fetchedAt: Date.now() };
+        this.remote = { paths: [], shas: {}, fetchedAt: Date.now() };
         return [];
       }
       this.syncState = 'error';
@@ -348,11 +358,15 @@ export const store = {
 
     let done = 0;
     const fetched = [];
+    const shas = this.remote.shas || {};
     await mapLimit(candidates, 3, async (p) => {
       try {
         const raw = await this.gh.getText(p);
         const parsed = this.fromMarkdown(raw, { path: p });
-        if (parsed) fetched.push(parsed);
+        if (parsed) {
+          parsed.sha = shas[p] || null;   // 记住远端版本，之后才能识别「别处改过」
+          fetched.push(parsed);
+        }
       } catch (e) {
         console.warn('fetch note failed', p, e);
       } finally {
@@ -370,6 +384,69 @@ export const store = {
     this.notes.sort((a, b) => (a.id < b.id ? 1 : -1));
     this.emit('change');
     return fetched.length;
+  },
+
+  /**
+   * 补齐远端比本地多出来的内容：
+   *   1. 别的设备新写的笔记（比本地最新的还新）
+   *   2. 别的设备改过的笔记（远端 sha 与本地记录的不一致，且本地没有待推送的改动）
+   * 更早的笔记仍然交给翻页 loadOlder 处理。
+   */
+  async pullRemote({ limit = 50 } = {}) {
+    if (!this.gh) return { added: 0, changed: 0 };
+    if (!this.remote.paths.length || Date.now() - (this.remote.fetchedAt || 0) > 30_000) {
+      await this.refreshTree({ quiet: true }).catch(() => {});
+    }
+    const shas = this.remote.shas || {};
+    const byId = new Map(this.notes.map((n) => [n.id, n]));
+    const newestLocalId = this.notes.length ? this.notes[0].id : null;
+
+    const added = [];
+    const changed = [];
+    for (const p of this.remote.paths) {
+      const id = idFromPath(p);
+      if (this.tombs.has(id)) continue;
+      const local = byId.get(id);
+      if (!local) {
+        if (!newestLocalId || id > newestLocalId) added.push(p);
+        continue;
+      }
+      if (local.pending) continue;                        // 本地有没推上去的改动，别被覆盖
+      const remoteSha = shas[p];
+      if (local.sha && remoteSha && local.sha !== remoteSha) changed.push(p);
+    }
+
+    const todo = added.slice(0, limit).concat(changed.slice(0, limit));
+    if (!todo.length) return { added: 0, changed: 0 };
+
+    const fetched = [];
+    await mapLimit(todo, 3, async (p) => {
+      try {
+        const raw = await this.gh.getText(p);
+        const note = this.fromMarkdown(raw, { path: p });
+        if (!note) return;
+        note.sha = shas[p] || null;
+        note.remote = true;
+        note.pending = false;
+        note.pushError = null;
+        fetched.push(note);
+      } catch (e) {
+        console.warn('pull note failed', p, e);
+      }
+    });
+    if (!fetched.length) return { added: 0, changed: 0 };
+
+    await dbNotes.putMany(fetched);
+    let nAdded = 0;
+    let nChanged = 0;
+    for (const note of fetched) {
+      if (byId.has(note.id)) nChanged++;
+      else nAdded++;
+      this.insertLocal(note);
+    }
+    this.notes.sort((a, b) => (a.id < b.id ? 1 : -1));
+    this.emit('change');
+    return { added: nAdded, changed: nChanged };
   },
 
   /** 拉取全部远端笔记（不含媒体二进制） */

@@ -35,7 +35,7 @@ async function boot() {
 
   window.addEventListener('online', () => {
     store.flushQueue();
-    store.refreshTree({ quiet: true }).catch(() => {});
+    store.pullRemote().catch(() => {});
   });
   window.addEventListener('offline', () => {
     toast('已离线，新笔记会先存在本地');
@@ -45,7 +45,10 @@ async function boot() {
     if (document.visibilityState === 'visible' && store.hasConfig()) {
       store.flushQueue();
       const age = Date.now() - (store.remote.fetchedAt || 0);
-      if (age > 60_000) store.refreshTree({ quiet: true }).catch(() => {});
+      if (age > 60_000) {
+        // 回到前台：看远端有没有新笔记（别的设备写的）或改过的
+        store.pullRemote().catch(() => {});
+      }
     }
   });
 

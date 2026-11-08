@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.6';
+const APP_VERSION = 'v1.7';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -152,12 +152,16 @@ async function manualSync() {
   haptic(6);
   els.syncBtn.classList.add('is-spinning');
   try {
-    // 先把手上的改动推上去，再拉一次仓库的文件树，两边的状态就对上了
+    // 先把手上没推上去的改动推上去，再把仓库里新增/改过的笔记拉回来，
+    // 最后刷新文件树，两边状态才算真的对上
     await store.flushQueue();
     await store.refreshTree({ quiet: true });
+    const pulled = await store.pullRemote();
     renderFeed();
     const pending = store.pendingCount();
     if (pending) toast(`${pending} 条没推上去，稍后会自动重试`);
+    else if (pulled.added) toast(`已同步，新增 ${pulled.added} 条`);
+    else if (pulled.changed) toast(`已同步，更新 ${pulled.changed} 条`);
     else toast('已和 GitHub 同步');
   } catch (e) {
     toast(`同步失败：${e.message || '网络异常'}`);
@@ -1135,10 +1139,12 @@ async function renderSettings() {
   });
   $('#set-sync').addEventListener('click', async () => {
     toast('同步中…');
-    await store.refreshTree({ quiet: true }).catch(() => {});
     await store.flushQueue();
+    await store.refreshTree({ quiet: true }).catch(() => {});
+    const pulled = await store.pullRemote().catch(() => ({ added: 0, changed: 0 }));
     await renderSettings();
-    toast('同步完成');
+    const fresh = (pulled.added || 0) + (pulled.changed || 0);
+    toast(fresh ? `同步完成，更新 ${fresh} 条` : '同步完成，没有新内容');
   });
   $('#set-pull').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
