@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.12';
+const APP_VERSION = 'v1.10';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
