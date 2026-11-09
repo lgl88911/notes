@@ -109,6 +109,7 @@
     </div>
     <textarea id="composer-text" class="composer-text" placeholder="现在在想什么…" rows="1"></textarea>
     <div class="attach-strip" id="attach-strip"></div>
+    <div class="ref-strip" id="ref-strip"></div>
     <div class="composer-tools">
       <button class="tool-btn" id="tool-image">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="8.6" cy="10" r="1.6"/><path d="M3.4 16.5l4.6-4.3 4 3.6 3-2.6 5.6 4.8"/></svg>
@@ -122,8 +123,29 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="12.5" height="13" rx="3"/><path d="M15.5 11l5-3v8l-5-3z"/></svg>
         <span>视频</span>
       </button>
+      <button class="tool-btn" id="tool-ref">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 13.5 4.5 8.5l5-5"/><path d="M4.5 8.5h8a6.5 6.5 0 0 1 6.5 6.5v4.5"/></svg>
+        <span>引用</span>
+      </button>
       <span class="composer-count" id="composer-count"></span>
     </div>
+  </div>
+</div>
+
+<!-- ===================== 选择要引用的笔记 ===================== -->
+<div id="ref-picker" class="sheet ref-picker" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel ref-panel">
+    <div class="sheet-head">
+      <span class="sheet-title">引用之前的笔记</span>
+      <button class="btn-text" data-close>取消</button>
+    </div>
+    <div class="ref-search">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      <input id="ref-search-input" placeholder="搜索笔记内容或日期" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="ref-list" id="ref-list"></div>
+    <div class="ref-foot" id="ref-foot" hidden></div>
   </div>
 </div>
 

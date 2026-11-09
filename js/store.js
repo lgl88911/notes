@@ -519,6 +519,29 @@ export const store = {
     }
   },
 
+  /** 取一条笔记；本地没有（或已被清理）就从仓库单独捞回来 */
+  async ensureNote(id) {
+    const local = this.notes.find((n) => n.id === id);
+    if (local) return local;
+    if (!this.gh || this.tombs.has(id)) return null;
+    try {
+      const path = this.notePath(id);
+      const raw = await this.gh.getText(path);
+      const note = this.fromMarkdown(raw, { path });
+      if (!note) return null;
+      note.remote = true;
+      note.pending = false;
+      await this.persistNote(note);
+      this.insertLocal(note);
+      this.notes.sort((a, b) => (a.id < b.id ? 1 : -1));
+      this.emit('change');
+      return note;
+    } catch (e) {
+      console.warn('ensure note failed', id, e);
+      return null;
+    }
+  },
+
   /* ==================== 删除 ==================== */
 
   async deleteNote(id) {

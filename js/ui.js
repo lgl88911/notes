@@ -4,16 +4,17 @@ import { store } from './store.js';
 import { notes as dbNotes, blobs as dbBlobs, meta as dbMeta, storageEstimate } from './db.js';
 import {
   $, $$, esc, renderText, findMediaLinks, findEmbedLinks, fmtTime, fmtDayLabel, dayKey, fmtDur, fmtBytes, fmtDateShort,
-  pad, toast, haptic, debounce, isoLocal,
+  pad, toast, haptic, debounce, isoLocal, NOTE_REF_RE, makeRef, findRefs, plainExcerpt,
 } from './util.js';
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
 import { getUpdater, shortSha } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.8';
+const APP_VERSION = 'v1.9';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
+let refState = null;      // 引用选择面板的临时状态
 let recorder = null;
 let recTimer = 0;
 
@@ -97,9 +98,14 @@ export function initUI() {
     composer: $('#composer'),
     composerText: $('#composer-text'),
     attachStrip: $('#attach-strip'),
+    refStrip: $('#ref-strip'),
     composerTitle: $('#composer-title'),
     fileImage: $('#file-image'),
     fileVideo: $('#file-video'),
+    refPicker: $('#ref-picker'),
+    refInput: $('#ref-search-input'),
+    refList: $('#ref-list'),
+    refFoot: $('#ref-foot'),
     recorderEl: $('#recorder'),
     viewer: $('#viewer'),
     viewerContent: $('#viewer-content'),
@@ -114,6 +120,7 @@ export function initUI() {
   wireTopbar();
   wireFeed();
   wireComposer();
+  wireRefPicker();
   wireRecorder();
   wireSearch();
   wireViewer();
@@ -297,7 +304,7 @@ function noteHTML(n, keyword) {
     : n.pending
       ? `<span class="note-state">待同步</span>`
       : '';
-  const text = n.text ? `<div class="note-text">${renderText(n.text, keyword)}</div>` : '';
+  const text = n.text ? `<div class="note-text">${renderNoteText(n.text, keyword)}</div>` : '';
   return `<article class="note" data-id="${esc(n.id)}">
     <div class="note-head">
       <span class="note-time">${fmtTime(d)}</span>
@@ -310,6 +317,33 @@ function noteHTML(n, keyword) {
     ${linkMediaHTML(n.text)}
     ${mediaHTML(n)}
   </article>`;
+}
+
+/* --- 正文里的笔记引用 --- */
+// [[note:id]] 分段渲染：引用两侧的文字各自走 renderText，引用本身换成可点的引用块。
+// 这样关键词高亮、链接识别都不会和引用标记互相干扰。
+function renderNoteText(text, keyword) {
+  if (!text) return '';
+  if (text.indexOf('[[note:') < 0) return renderText(text, keyword);
+  let html = '';
+  let last = 0;
+  for (const m of text.matchAll(NOTE_REF_RE)) {
+    html += renderText(text.slice(last, m.index), keyword);
+    html += refChipHTML(m[1]);
+    last = m.index + m[0].length;
+  }
+  return html + renderText(text.slice(last), keyword);
+}
+
+function refChipHTML(id) {
+  const note = store.notes.find((n) => n.id === id);
+  const d = idToDateSafe(id);
+  const label = `${fmtDateShort(d).slice(5)} ${fmtTime(d)}`;
+  const hint = note
+    ? (plainExcerpt(note.text, 40) || '（只有图片或录音）')
+    : '这条笔记本地还没有，点一下从仓库取';
+  return `<a class="note-ref${note ? '' : ' is-missing'}" data-act="open-ref" data-ref="${esc(id)}"
+    role="button" tabindex="0" title="${esc(hint)}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 13.5 4.5 8.5l5-5"/><path d="M4.5 8.5h8a6.5 6.5 0 0 1 6.5 6.5v4.5"/></svg><span>${esc(label)}</span></a>`;
 }
 
 /* --- 正文里的媒体直链 --- */
@@ -483,7 +517,19 @@ function wireFeed() {
       toggleAudio(act, nid, k);
     } else if (act.dataset.act === 'open-ext') {
       openExternalImage(act.dataset.url);
+    } else if (act.dataset.act === 'open-ref') {
+      e.preventDefault();
+      openRef(act.dataset.ref);
     }
+  });
+
+  // 引用块用键盘也能打开
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const ref = e.target.closest?.('[data-act="open-ref"]');
+    if (!ref) return;
+    e.preventDefault();
+    openRef(ref.dataset.ref);
   });
 
   // 外链图片加载失败（防盗链、链接失效）时退回成可点的普通链接，不留空白块
@@ -544,6 +590,44 @@ function setPlaying(btn, playing) {
     : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5l11 6.5-11 6.5z"/></svg>';
 }
 
+/* --- 跳到被引用的笔记 --- */
+
+async function openRef(id) {
+  if (!id) return;
+  // 引用可能在搜索结果页里被点到，先把那一层收掉，回到信息流
+  if (!els.search.hidden) closeSearch();
+  else if (!els.settings.hidden) closeSettings();
+
+  haptic(5);
+  let note = store.notes.find((n) => n.id === id);
+  if (!note) {
+    toast('正在从仓库取这条笔记…');
+    note = await store.ensureNote(id).catch(() => null);
+    if (!note) return toast('这条笔记已经不在了');
+  }
+
+  // 信息流只渲染最近的一段，被引用的更早笔记需要先把渲染范围撑开
+  const idx = store.notes.findIndex((n) => n.id === id);
+  if (idx < 0) return toast('这条笔记已经不在了');
+  if (idx >= renderLimit || !els.feed.querySelector(`.note[data-id="${esc(id)}"]`)) {
+    renderLimit = Math.max(renderLimit, idx + 5);
+    renderFeed();
+  }
+  const el = els.feed.querySelector(`.note[data-id="${esc(id)}"]`);
+  if (!el) return toast('这条笔记暂时打不开');
+  flashNote(el);
+}
+
+let flashTimer = 0;
+function flashNote(el) {
+  el.classList.remove('is-ref-target');
+  void el.offsetWidth; // 重排一次，让同一个笔记也能重放高亮
+  el.classList.add('is-ref-target');
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => el.classList.remove('is-ref-target'), 1900);
+}
+
 /* --- 笔记操作菜单 --- */
 
 function openNoteMenu(id) {
@@ -556,6 +640,7 @@ function openNoteMenu(id) {
     <div class="sheet-backdrop" data-close></div>
     <div class="sheet-panel">
       <button class="menu-item" data-do="edit">编辑</button>
+      <button class="menu-item" data-do="quote">引用这条</button>
       <button class="menu-item" data-do="copy">复制文字</button>
       ${store.gh ? '<button class="menu-item" data-do="open-file">在 GitHub 上查看</button>' : ''}
       <button class="menu-item" data-do="sync">立即同步</button>
@@ -574,6 +659,7 @@ function openNoteMenu(id) {
     const what = item.dataset.do;
     dismiss();
     if (what === 'edit') openComposer({ note });
+    if (what === 'quote') openComposer({ text: `${makeRef(note.id)} ` });
     if (what === 'copy') {
       try {
         await navigator.clipboard.writeText(note.text || '');
@@ -617,11 +703,13 @@ function wireComposer() {
   els.composerText.addEventListener('input', () => {
     autoGrow(els.composerText);
     updateComposerCount();
+    renderRefStrip();
   });
 
   $('#tool-image').addEventListener('click', () => els.fileImage.click());
   $('#tool-audio').addEventListener('click', () => openRecorder());
   $('#tool-video').addEventListener('click', () => els.fileVideo.click());
+  $('#tool-ref').addEventListener('click', openRefPicker);
 
   els.fileImage.multiple = true;
   els.fileImage.addEventListener('change', onPickImages);
@@ -659,6 +747,7 @@ function openComposer({ note = null, attachments = [], text = '' } = {}) {
   els.composerText.value = isEdit ? (note.text || '') : text;
   setTimeout(() => { els.composerText.focus(); autoGrow(els.composerText); }, 60);
   renderAttachments();
+  renderRefStrip();
   updateComposerCount();
   previewExistingMedia();
   document.body.style.overflow = 'hidden';
@@ -673,13 +762,57 @@ function hideComposer() {
   els.composer.hidden = true;
   els.composerText.value = '';
   els.attachStrip.innerHTML = '';
+  els.refStrip.innerHTML = '';
   composerState = null;
+  // 引用选择面板如果还开着，一并收掉，别在层栈里留个空壳
+  if (!els.refPicker.hidden) {
+    els.refPicker.hidden = true;
+    els.refInput.value = '';
+    refState = null;
+    const i = layers.findIndex((l) => l.name === 'refpicker');
+    if (i >= 0) layers.splice(i, 1);
+  }
   document.body.style.overflow = '';
 }
 
 function updateComposerCount() {
-  const len = (els.composerText.value || '').length;
+  // 引用标记（[[note:id]]）不算进字数，否则一条引用就凭空多出三十来个字
+  const raw = els.composerText.value || '';
+  const len = raw.indexOf('[[note:') >= 0 ? raw.replace(NOTE_REF_RE, '').length : raw.length;
   $('#composer-count').textContent = len ? `${len} 字` : '';
+}
+
+/* --- 编辑器里的引用条 --- */
+// 正文里存的是 [[note:id]]，字数一多就不好认。这里把引用解析出来列成小条，
+// 点 ✕ 直接把对应的标记从正文里删掉。
+
+function renderRefStrip() {
+  const strip = els.refStrip;
+  if (!strip) return;
+  const ids = findRefs(els.composerText.value);
+  if (!ids.length) { strip.innerHTML = ''; return; }
+  strip.innerHTML = ids.map((id) => {
+    const note = store.notes.find((n) => n.id === id);
+    const d = idToDateSafe(id);
+    const label = note
+      ? `${fmtDateShort(d).slice(5)} ${fmtTime(d)}`
+      : `${fmtDateShort(d).slice(5)}（未找到）`;
+    return `<span class="ref-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 13.5 4.5 8.5l5-5"/><path d="M4.5 8.5h8a6.5 6.5 0 0 1 6.5 6.5v4.5"/></svg><span>${esc(label)}</span><button data-drop-ref="${esc(id)}" aria-label="移除引用">✕</button></span>`;
+  }).join('');
+
+  strip.querySelectorAll('[data-drop-ref]').forEach((b) => {
+    b.addEventListener('click', () => dropRef(b.dataset.dropRef));
+  });
+}
+
+function dropRef(id) {
+  const ta = els.composerText;
+  const token = makeRef(id);
+  ta.value = ta.value.split(token).join('').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+$/, '');
+  autoGrow(ta);
+  updateComposerCount();
+  renderRefStrip();
+  ta.focus();
 }
 
 function nextMediaKey() {
@@ -812,6 +945,149 @@ async function saveComposer() {
     btn.disabled = false;
     btn.textContent = '发布';
   }
+}
+
+/* ==================== 选择要引用的笔记 ==================== */
+// 发布前从历史笔记里挑一条，把 [[note:id]] 插进正文。选择面板里可以搜索，
+// 本地没有的更早笔记也能按需从仓库拉回来。
+
+function wireRefPicker() {
+  if (!els.refPicker) return;
+  $$('#ref-picker [data-close]').forEach((b) => b.addEventListener('click', closeRefPicker));
+  els.refInput.addEventListener('input', debounce(() => {
+    if (!refState) return;
+    refState.q = els.refInput.value;
+    refState.limit = 30;
+    renderRefList();
+  }, 160));
+
+  els.refList.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-ref-id]');
+    if (item) insertRef(item.dataset.refId);
+  });
+
+  els.refFoot.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || !refState) return;
+    if (btn.id === 'ref-more') { refState.limit += 30; renderRefList(); }
+    if (btn.id === 'ref-pull') pullRefCandidates(btn);
+  });
+}
+
+function openRefPicker() {
+  if (!composerState) return;
+  const ta = els.composerText;
+  // 记住光标位置：下一步焦点会跑到搜索框上，插入时还得回到原处
+  refState = {
+    q: '',
+    limit: 30,
+    sel: [ta.selectionStart ?? ta.value.length, ta.selectionEnd ?? ta.value.length],
+  };
+  els.refInput.value = '';
+  els.refPicker.hidden = false;
+  renderRefList();
+  layerOpened('refpicker', hideRefPicker);
+  setTimeout(() => els.refInput.focus(), 80);
+}
+
+function closeRefPicker() {
+  if (!layerClose()) hideRefPicker();
+}
+
+function hideRefPicker() {
+  els.refPicker.hidden = true;
+  els.refInput.value = '';
+  refState = null;
+  document.body.style.overflow = composerState ? 'hidden' : '';
+  if (composerState) setTimeout(() => els.composerText.focus(), 40);
+}
+
+function renderRefList() {
+  if (!refState || !els.refList) return;
+  const q = (refState.q || '').trim();
+  const cur = composerState && composerState.id;
+  const all = (q ? store.searchLocal(q) : store.notes)
+    .filter((n) => n.id !== cur && !n.deletingPending);
+  const shown = all.slice(0, refState.limit);
+
+  els.refList.innerHTML = shown.length
+    ? shown.map(refItemHTML).join('')
+    : `<div class="empty" style="padding:60px 12px">${q ? '没有匹配的笔记' : '还没有可以引用的笔记'}</div>`;
+
+  const missing = store.missingCount();
+  const foot = [];
+  if (all.length > shown.length) foot.push(`<button id="ref-more">显示更早的 ${all.length - shown.length} 条</button>`);
+  if (missing > 0) {
+    const n = Math.min(missing, 600);
+    foot.push(`<button id="ref-pull">${q ? `在 GitHub 上搜索全部 ${n} 条历史` : `从 GitHub 载入更早的 ${n} 条`}</button>`);
+  }
+  els.refFoot.innerHTML = foot.join('');
+  els.refFoot.hidden = !foot.length;
+}
+
+function refItemHTML(n) {
+  const d = idToDateSafe(n.id);
+  const media = n.media || [];
+  const tags = [];
+  if (media.some((m) => m.t === 'image')) tags.push('图');
+  if (media.some((m) => m.t === 'audio')) tags.push('音');
+  if (media.some((m) => m.t === 'video')) tags.push('视频');
+  const excerpt = plainExcerpt(n.text, 70) || (tags.length ? '（只有媒体）' : '（没有文字）');
+  return `<button class="ref-item" data-ref-id="${esc(n.id)}">
+    <span class="ref-item-head"><span class="ref-item-time">${esc(fmtDayLabel(d))} ${fmtTime(d)}</span>${tags.map((t) => `<em class="ref-item-tag">${esc(t)}</em>`).join('')}</span>
+    <span class="ref-item-text">${esc(excerpt)}</span>
+  </button>`;
+}
+
+async function pullRefCandidates(btn) {
+  const q = (refState && refState.q || '').trim();
+  const label = btn.textContent;
+  btn.disabled = true;
+  try {
+    if (!q) {
+      await store.refreshTree({ quiet: true }).catch(() => {});
+      const n = await store.loadOlder(30);
+      toast(n ? `又载入 ${n} 条` : '没有更早的笔记了');
+    } else {
+      const hits = await store.searchRemote(q, {
+        onProgress: (done, total) => { btn.textContent = `正在检索 ${done}/${total}`; },
+      });
+      toast(hits.length ? `仓库里又找到 ${hits.length} 条` : '仓库里没有更多匹配');
+    }
+  } catch (e) {
+    toast(`检索失败：${e.message || '网络异常'}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+    renderRefList();
+  }
+}
+
+function insertRef(id) {
+  if (!composerState || !id) return;
+  const ta = els.composerText;
+  const token = makeRef(id);
+  const cur = ta.value;
+  const saved = refState && refState.sel;
+  const start = Math.min(saved ? saved[0] : cur.length, cur.length);
+  const end = Math.min(Math.max(saved ? saved[1] : start, start), cur.length);
+  const before = cur.slice(0, start);
+  const after = cur.slice(end);
+  const pre = before && !/\s$/.test(before) ? ' ' : '';
+  const post = !after || /^\s/.test(after) ? '' : ' ';
+  const keep = before + pre + token + post;
+  ta.value = keep + after;
+
+  haptic(8);
+  closeRefPicker();
+  renderRefStrip();
+  updateComposerCount();
+  setTimeout(() => {
+    ta.focus();
+    const pos = keep.length;
+    ta.setSelectionRange(pos, pos);
+    autoGrow(ta);
+  }, 40);
 }
 
 /* ==================== 录音 ==================== */
