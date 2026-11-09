@@ -146,38 +146,51 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 .note-text a { color: var(--accent); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 .note-text mark { background: var(--accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; }
 
-/* 正文里的笔记引用 */
+/* 正文里的笔记引用：独自占一行，像推特里的引用卡片 */
 .note-text a.note-ref {
-  display: inline-flex; align-items: center; gap: 4px;
-  max-width: 100%; padding: 1px 8px 1px 6px; margin: 0 1px;
-  border-radius: 7px; border-bottom: none;
-  background: var(--accent-soft);
-  color: var(--accent);
+  display: block;
+  margin: 12px 0;
+  padding: 10px 13px 11px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--line-soft);
+  color: var(--text-soft);
   font-family: var(--font);
-  font-size: .78em; line-height: 1.8;
-  letter-spacing: .02em; white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  /* inline-flex 的基线取自第一个子项（这里是个 svg），用 baseline 会整体偏下，
-     改成 middle 让它跟正文的行中位置对齐 */
-  vertical-align: middle;
+  letter-spacing: .01em;
+  white-space: normal;
+  text-decoration: none;
   cursor: pointer;
+  transition: background .15s ease;
+}
+.note-ref-head {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; line-height: 1.4;
+  color: var(--muted);
+  letter-spacing: .03em;
 }
 .note-ref-quote { flex: 0 0 auto; opacity: .7; }
-.note-ref-time { flex: 0 0 auto; }
-.note-ref-dot { flex: 0 0 auto; opacity: .45; }
-/* 引用的那点内容：文字截断成一行，媒体给图标 */
-.note-ref-body { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
+.note-ref-time { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+/* 引用的那点内容：字号比正文略小，两行以外截断 */
 .note-ref-excerpt {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  opacity: .92;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 3px;
+  font-family: var(--font-serif);
+  font-size: 15px; line-height: 1.5;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
-.note-ref-media { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.note-ref-media { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; margin-left: 1px; }
 .note-ref-kind { display: inline-flex; }
-.note-ref-kind svg { width: 11px; height: 11px; display: block; }
-.note-text a.note-ref:active { opacity: .65; }
+.note-ref-kind svg { width: 12px; height: 12px; display: block; }
+.note-text a.note-ref:active { background: var(--line); }
 .note-text a.note-ref.is-missing {
-  background: var(--line-soft); color: var(--muted);
+  border-style: dashed;
+  color: var(--muted);
 }
+.note-text a.note-ref.is-missing .note-ref-excerpt { color: var(--muted); font-family: var(--font); font-size: 14.5px; }
 
 /* 从引用跳过来的那条笔记闪一下 */
 .note.is-ref-target { animation: ref-flash 1.9s ease-out; border-radius: 10px; }
