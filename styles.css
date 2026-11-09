@@ -148,9 +148,7 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 
 /* 正文里的笔记引用：独自占一行，像推特里的引用卡片 */
 .note-text a.note-ref {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  display: block;
   margin: 12px 0;
   padding: 10px 13px 11px;
   max-width: 100%;
@@ -165,7 +163,6 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
   cursor: pointer;
   transition: background .15s ease;
 }
-.note-ref-main { flex: 1 1 auto; min-width: 0; }
 .note-ref-head {
   display: flex; align-items: center; gap: 5px;
   font-size: 12px; line-height: 1.4;
@@ -188,18 +185,6 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 .note-ref-media { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; margin-left: 1px; }
 .note-ref-kind { display: inline-flex; }
 .note-ref-kind svg { width: 12px; height: 12px; display: block; }
-/* 被引笔记里的图片：缩成头像大小的小方图，点卡片仍跳到那条笔记 */
-.note-ref-thumbs { flex: 0 0 auto; display: flex; gap: 4px; }
-.note-ref-thumb {
-  display: block; width: 52px; height: 52px;
-  border-radius: 8px; object-fit: cover;
-  background: var(--line);
-  opacity: 0; transition: opacity .2s ease;
-}
-.note-ref-thumbs .media-missing {
-  width: 52px; height: 52px; border-radius: 8px;
-  padding: 0 4px; font-size: 10px; line-height: 1.25; text-align: center;
-}
 .note-text a.note-ref:active { background: var(--line); }
 .note-text a.note-ref.is-missing {
   border-style: dashed;
