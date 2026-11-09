@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.10';
+const APP_VERSION = 'v1.11';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -346,18 +346,30 @@ function refCardHTML(id) {
 
   if (!note) {
     return `<a class="note-ref is-missing" data-act="open-ref" data-ref="${esc(id)}" role="button" tabindex="0"
-      title="这条笔记本地还没有，点一下从仓库取">${head}<span class="note-ref-time">${esc(time)}</span></span>
-      <span class="note-ref-excerpt">找不到这条</span></a>`;
+      title="这条笔记本地还没有，点一下从仓库取"><span class="note-ref-main">${head}<span class="note-ref-time">${esc(time)}</span></span>
+      <span class="note-ref-excerpt">找不到这条</span></span></a>`;
   }
 
   const excerpt = plainExcerpt(note.text, REF_EXCERPT);
-  const icons = mediaIconsHTML(note.media);
+  // 顶行的媒体图标只留图片以外的类型——图片改在右边出头像大小的缩略图
+  const nonImage = (note.media || []).filter((m) => m.t !== 'image');
+  const icons = mediaIconsHTML(nonImage);
+  const thumbs = refThumbsHTML(note);
   const hint = [plainExcerpt(note.text, 80), mediaNames(note.media).join('、')].filter(Boolean).join(' · ')
     || '这条笔记没有正文';
-  return `<a class="note-ref" data-act="open-ref" data-ref="${esc(id)}" role="button" tabindex="0" title="${esc(hint)}"
-    >${head}<span class="note-ref-time">${esc(time)}</span>${icons}</span>${
+  return `<a class="note-ref${thumbs ? ' has-thumb' : ''}" data-act="open-ref" data-ref="${esc(id)}" role="button" tabindex="0" title="${esc(hint)}"
+    ><span class="note-ref-main">${head}<span class="note-ref-time">${esc(time)}</span>${icons}</span>${
     excerpt ? `<span class="note-ref-excerpt">${esc(excerpt)}</span>` : ''
-  }</a>`;
+  }</span>${thumbs}</a>`;
+}
+
+// 被引笔记里的图片，取前两张做成小方图；图片跟正文一样走 data-img 懒加载
+const REF_THUMBS = 2;
+function refThumbsHTML(note) {
+  const imgs = (note.media || []).filter((m) => m.t === 'image').slice(0, REF_THUMBS);
+  if (!imgs.length) return '';
+  return `<span class="note-ref-thumbs">${imgs.map((m) => `<img class="note-ref-thumb" alt=""
+    data-img="${esc(note.id)}:${esc(m.k)}">`).join('')}</span>`;
 }
 
 // 引用块里给多少字：卡片两行大概放得下这么多，再多交给 CSS 的 line-clamp 收尾
