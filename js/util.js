@@ -211,6 +211,41 @@ export function findEmbedLinks(text) {
   return out;
 }
 
+/* ==================== 笔记引用 ==================== */
+
+// 正文里用 [[note:20261108T230450-8vni]] 引用另一条笔记。
+// 存纯文本标记而不是 HTML：仓库里的 Markdown 仍然可读，也能一眼看出这是条引用；
+// 渲染时再换成可点的引用块，点击跳到被引用的那条。
+export const NOTE_REF_RE = /\[\[note:([A-Za-z0-9_-]+)\]\]/g;
+
+export function makeRef(id) {
+  return `[[note:${id}]]`;
+}
+
+export function hasRefs(text) {
+  return !!(text && typeof text === 'string' && text.indexOf('[[note:') >= 0);
+}
+
+/** 正文里引用了哪些笔记 id，按出现顺序去重 */
+export function findRefs(text) {
+  if (!hasRefs(text)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const m of text.matchAll(NOTE_REF_RE)) {
+    if (seen.has(m[1])) continue;
+    seen.add(m[1]);
+    out.push(m[1]);
+  }
+  return out;
+}
+
+/** 去掉引用标记后的纯文本摘要，用于列表预览 */
+export function plainExcerpt(text, max = 60) {
+  if (!text) return '';
+  const s = String(text).replace(NOTE_REF_RE, ' 引用 ').replace(/\s+/g, ' ').trim();
+  return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
 export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
