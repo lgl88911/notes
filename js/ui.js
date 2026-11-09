@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.9';
+const APP_VERSION = 'v1.10';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -325,38 +325,43 @@ function noteHTML(n, keyword) {
 function renderNoteText(text, keyword) {
   if (!text) return '';
   if (text.indexOf('[[note:') < 0) return renderText(text, keyword);
-  let html = '';
+  const out = [];
   let last = 0;
   for (const m of text.matchAll(NOTE_REF_RE)) {
-    html += renderText(text.slice(last, m.index), keyword);
-    html += refChipHTML(m[1]);
+    // 引用块本身自成一行，紧挨着它的那个换行就不必再留出一行空白
+    out.push(renderText(text.slice(last, m.index).replace(/[ \t]*\n$/, ''), keyword));
+    out.push(refCardHTML(m[1]));
     last = m.index + m[0].length;
   }
-  return html + renderText(text.slice(last), keyword);
+  out.push(renderText(text.slice(last).replace(/^[ \t]*\n/, ''), keyword));
+  return out.join('');
 }
 
-function refChipHTML(id) {
+// 引用块：独自占一行，形似推特里的引用卡片——上面一行时间/媒体，下面是原文开头几行
+function refCardHTML(id) {
   const note = store.notes.find((n) => n.id === id);
   const d = idToDateSafe(id);
   const time = `${fmtDateShort(d).slice(5)} ${fmtTime(d)}`;
-  const quote = '<svg class="note-ref-quote" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 13.5 4.5 8.5l5-5"/><path d="M4.5 8.5h8a6.5 6.5 0 0 1 6.5 6.5v4.5"/></svg>';
+  const head = '<span class="note-ref-head"><svg class="note-ref-quote" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 13.5 4.5 8.5l5-5"/><path d="M4.5 8.5h8a6.5 6.5 0 0 1 6.5 6.5v4.5"/></svg>';
 
   if (!note) {
     return `<a class="note-ref is-missing" data-act="open-ref" data-ref="${esc(id)}" role="button" tabindex="0"
-      title="这条笔记本地还没有，点一下从仓库取">${quote}<span class="note-ref-time">${esc(time)}</span><span class="note-ref-dot">·</span><span class="note-ref-body">找不到这条</span></a>`;
+      title="这条笔记本地还没有，点一下从仓库取">${head}<span class="note-ref-time">${esc(time)}</span></span>
+      <span class="note-ref-excerpt">找不到这条</span></a>`;
   }
 
-  // 引用块里带一点被引用的内容：有文字给一小截文字，媒体给对应的示意图标
   const excerpt = plainExcerpt(note.text, REF_EXCERPT);
   const icons = mediaIconsHTML(note.media);
-  const body = (excerpt ? `<span class="note-ref-excerpt">${esc(excerpt)}</span>` : '') + icons;
-  const hint = [plainExcerpt(note.text, 60), mediaNames(note.media).join('、')].filter(Boolean).join(' · ')
+  const hint = [plainExcerpt(note.text, 80), mediaNames(note.media).join('、')].filter(Boolean).join(' · ')
     || '这条笔记没有正文';
-  return `<a class="note-ref" data-act="open-ref" data-ref="${esc(id)}" role="button" tabindex="0" title="${esc(hint)}">${quote}<span class="note-ref-time">${esc(time)}</span>${body ? `<span class="note-ref-dot">·</span><span class="note-ref-body">${body}</span>` : ''}</a>`;
+  return `<a class="note-ref" data-act="open-ref" data-ref="${esc(id)}" role="button" tabindex="0" title="${esc(hint)}"
+    >${head}<span class="note-ref-time">${esc(time)}</span>${icons}</span>${
+    excerpt ? `<span class="note-ref-excerpt">${esc(excerpt)}</span>` : ''
+  }</a>`;
 }
 
-// 引用块里显示多少字：手机上一行放得下「时间 + 十来个字」，再多就用省略号收尾
-const REF_EXCERPT = 14;
+// 引用块里给多少字：卡片两行大概放得下这么多，再多交给 CSS 的 line-clamp 收尾
+const REF_EXCERPT = 60;
 
 const MEDIA_ICONS = {
   image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="8.6" cy="10" r="1.6"/><path d="M3.4 16.5l4.6-4.3 4 3.6 3-2.6 5.6 4.8"/></svg>',
