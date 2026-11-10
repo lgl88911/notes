@@ -7,10 +7,10 @@ import {
   pad, toast, haptic, debounce, isoLocal, NOTE_REF_RE, makeRef, findRefs, plainExcerpt,
 } from './util.js';
 import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from './media.js';
-import { getUpdater, shortSha } from './update.js';
+import { getUpdater, shortSha, getOfflineStatus } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.10';
+const APP_VERSION = 'v1.11';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -504,7 +504,9 @@ async function fillImage(img, key) {
   const note = store.notes.find((n) => n.id === nid);
   if (!note) return;
   const m = note.media.find((x) => x.k === k);
-  const url = await resolveMediaUrl(note, m);
+  // 离线时取图会抛错，兜住它，让位置显示「图片暂不可用」而不是一直空着
+  let url = '';
+  try { url = await resolveMediaUrl(note, m); } catch { url = ''; }
   if (url) {
     img.src = url;
     img.style.opacity = '1';
@@ -1365,6 +1367,23 @@ async function deepSearch(q, token) {
 
 /* ==================== 设置 ==================== */
 
+// 设置里的「离线副本」：问一下 Service Worker 界面文件齐不齐。
+// 没网也打不开的时候，先看这一行是不是「已就绪」。
+async function fillOfflineStatus() {
+  const el = $('#set-offline');
+  if (!el) return;
+  if (!('serviceWorker' in navigator)) { el.textContent = '浏览器不支持离线缓存'; return; }
+  const s = await getOfflineStatus();
+  if (!el.isConnected) return;
+  if (!s) {
+    el.textContent = navigator.serviceWorker.controller ? '读取失败，稍后再看' : '未启用（联网重开一次）';
+    return;
+  }
+  el.textContent = s.missing && s.missing.length
+    ? `${s.cached}/${s.total} 个，联网后补齐`
+    : `已就绪（${s.total} 个文件）`;
+}
+
 function wireSettings() {
   $$('#settings [data-close]').forEach((b) => b.addEventListener('click', closeSettings));
 }
@@ -1444,8 +1463,11 @@ async function renderSettings() {
         <button class="btn-ghost btn-danger-ghost" id="set-wipe">清空本地缓存</button>
       </div>
       <div class="set-hint" id="set-update-hint">「更新到最新版本」会立即和线上比对，有新版就重新下载界面文件并重载；平时打开应用也会自动检查。<br>「清空本地缓存」删掉手机上的笔记副本，往下翻页会重新从 GitHub 拉取。两个都不会动仓库。</div>
+      <div class="set-row"><span class="k">离线副本</span><span class="v" id="set-offline">检查中…</span></div>
       <div class="set-row"><span class="k">数据位置</span><span class="v">github.com/${esc(cfg.owner || '')}/${esc(cfg.repo || '')}</span></div>
     </div>`;
+
+  fillOfflineStatus();
 
   $('#set-edit-config').addEventListener('click', () => { closeSettings(); openSetup(true); });
   $('#set-test').addEventListener('click', async () => {
@@ -1532,6 +1554,13 @@ async function renderSettings() {
       btn.textContent = '正在更新…';
       if (hint) hint.textContent = '发现新版本，正在重新载入…';
       return; // forceUpdate 内部会 reload
+    }
+    if (res && res.offline) {
+      btn.disabled = false;
+      btn.textContent = '更新到最新版本';
+      toast('现在没有网络，跳过更新');
+      if (hint) hint.textContent = '离线时不更新，界面缓存原样保留，没网也能打开。联网后再点一次即可。';
+      return;
     }
     btn.disabled = false;
     btn.textContent = '更新到最新版本';
