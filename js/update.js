@@ -21,6 +21,36 @@ export function shortSha(sha) {
   return sha ? String(sha).slice(0, 7) : '';
 }
 
+// 让 Service Worker 把界面文件再补缓存一遍（离线可用靠它）
+export function askPrecache() {
+  const c = typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.controller;
+  if (c) c.postMessage({ type: 'precache' });
+}
+
+// 问 Service Worker 离线副本齐不齐；没有控制器 / 超时就返回 null
+export function getOfflineStatus(timeout = 1500) {
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) return resolve(null);
+    const c = navigator.serviceWorker.controller;
+    if (!c) return resolve(null);
+    let done = false;
+    const ch = new MessageChannel();
+    const timer = setTimeout(() => { if (!done) { done = true; resolve(null); } }, timeout);
+    ch.port1.onmessage = (ev) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(ev.data || null);
+    };
+    try {
+      c.postMessage({ type: 'status' }, [ch.port2]);
+    } catch {
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
 export function createUpdater({
   readVersion,        // () => Promise<{sha, app}|null>
   notify = () => {},  // 提示文案
@@ -93,7 +123,14 @@ export function createUpdater({
   async function forceUpdate(onStage = () => {}) {
     onStage('检查中…');
     const v = await readVersion().catch(() => null);
-    const same = !!(v && v.sha && state.sha && v.sha === state.sha);
+
+    // 离线时读不到版本号。这时候绝不能清界面缓存——那是离线能打开的唯一依靠
+    if (!v || !v.sha) {
+      onStage('没有网络');
+      return { updated: false, version: null, offline: true };
+    }
+
+    const same = !!(state.sha && v.sha === state.sha);
 
     if (same) {
       onStage('整理本地缓存…');
@@ -123,17 +160,20 @@ export function createUpdater({
     try {
       reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
       checkSW(true);
+      // 注册完先让 SW 把界面文件补齐；装到桌面之后离线能不能打开就看这一步
+      navigator.serviceWorker.ready.then(() => askPrecache()).catch(() => {});
       reg.addEventListener('updatefound', () => {
         const next = reg.installing;
         if (!next) return;
         next.addEventListener('statechange', () => {
-          if (next.state === 'activated') schedule();
+          if (next.state === 'activated') { askPrecache(); schedule(); }
         });
       });
       setTimer(() => checkSW(false), swCheckMs);
     } catch { /* 注册失败不阻塞使用 */ }
 
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      askPrecache();
       if (!hadController) return; // 首次安装，本来就是这个版本
       schedule();
     });
@@ -145,7 +185,7 @@ export function createUpdater({
       checkSW(false);
     });
     window.addEventListener('focus', () => { settle(); check(); checkSW(false); });
-    window.addEventListener('online', () => { check(); checkSW(true); });
+    window.addEventListener('online', () => { check(); checkSW(true); askPrecache(); });
     window.addEventListener('pageshow', (e) => { if (e.persisted) { check(); checkSW(false); } });
 
     setTimer(() => {
