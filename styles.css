@@ -106,7 +106,8 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 .day-sep {
   display: flex; align-items: center; gap: 10px;
   padding: 24px 0 6px;
-  font-size: 12.5px; color: var(--muted); letter-spacing: .06em;
+  font-size: 16.5px; font-weight: 700; color: var(--text); letter-spacing: .02em;
+  line-height: 1.4;
 }
 .day-sep::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
 
@@ -119,10 +120,10 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 .note.just-in { animation: fade-slide .45s cubic-bezier(.2, .8, .2, 1); }
 @keyframes fade-slide { from { opacity: 0; transform: translateY(-6px); } }
 
-.note-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.note-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .note-time {
-  font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums;
-  letter-spacing: .04em;
+  font-size: 16.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums;
+  letter-spacing: .02em; line-height: 1.4;
 }
 .note-state { font-size: 11px; color: var(--accent); letter-spacing: .04em; }
 .note-state.err { color: var(--danger); }

@@ -9,7 +9,7 @@
 //      离线时先按原地址找，找不到再退到 index.html。
 //   3. 资源找不到缓存就回 504，不再拿 index.html 顶替 JS/CSS（那样只会白屏）。
 
-const VERSION = 'v15';
+const VERSION = 'v16';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
 const MEDIA_CACHE = 'notestream-media';
 const MEDIA_MAX_ENTRIES = 300;
