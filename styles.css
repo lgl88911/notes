@@ -312,6 +312,15 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
   transition: border-color .2s;
 }
 .composer-fake:active { border-color: var(--muted); }
+/* 有没发出去的草稿：底部输入条直接显示开头几个字，左侧挂一个「草稿」小标 */
+.composer-fake.has-draft { color: var(--text); border-style: dashed; }
+.composer-fake.has-draft::before {
+  content: '草稿'; flex: 0 0 auto; margin-right: 8px;
+  font-size: 11px; line-height: 1.5; letter-spacing: .02em;
+  color: var(--accent); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px;
+  opacity: .9;
+}
+.composer-fake > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-tool {
   width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%;
   display: grid; place-items: center; color: var(--text-soft);

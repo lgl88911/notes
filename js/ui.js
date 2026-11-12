@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha, getOfflineStatus } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.11';
+const APP_VERSION = 'v1.12';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -130,6 +130,14 @@ export function initUI() {
   store.on(onStoreEvent);
   renderFeed();
   updateChip();
+
+  // 还没发布的草稿：启动时读一次，先把底部输入条的提示换成草稿开头
+  draftStore().then(updateComposeBarHint).catch(() => {});
+  // 切后台、关页面时防抖可能还没到点，这里补一次，别丢最后几个字
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushDraft();
+  });
+  window.addEventListener('pagehide', flushDraft);
 }
 
 function onStoreEvent(type, data) {
@@ -730,6 +738,132 @@ async function confirmDelete(note) {
   }
 }
 
+/* ==================== 没发出去的草稿 ==================== */
+// 编辑区里写了但还没发布的内容，随时落到 IndexedDB：正文和附件描述放 meta，
+// 还没上传的媒体二进制放 blobs（key 前缀 draft:）。关掉页面、过一天再进来都还在。
+// 编辑已有笔记时不写草稿——那条笔记本身在仓库里，半成品不该覆盖它。
+//
+// 发布时间点会把草稿清干净；「取消」只是收起了面板，草稿留着，下次打开接着写。
+
+const DRAFT_KEY = 'composerDraft';
+const DRAFT_BLOB = 'draft:';
+
+let draft = null;        // { text, media: [], items: [], at }
+let draftReady = null;   // 首次读盘的 promise，供 openComposer 等
+let draftTimer = 0;
+let composerOpening = false;
+
+function draftStore() {
+  if (!draftReady) draftReady = loadDraft().then((d) => { draft = d; return d; });
+  return draftReady;
+}
+
+async function loadDraft() {
+  let saved;
+  try {
+    saved = await dbMeta.get(DRAFT_KEY, null);
+  } catch {
+    return null;
+  }
+  if (!saved) return null;
+
+  const media = [];
+  const items = [];
+  for (const m of saved.media || []) {
+    let blob = null;
+    try { blob = (await dbBlobs.get(DRAFT_BLOB + m.k))?.blob || null; } catch { blob = null; }
+    if (!blob) continue; // 二进制丢了就跳过这一项，别留一个打不开的空壳
+    media.push(m);
+    items.push({
+      k: m.k, t: m.t, m: m.m, w: m.w || 0, h: m.h || 0, dur: m.dur || 0, wave: m.wave || null,
+      blob, preview: m.t === 'image' ? URL.createObjectURL(blob) : null, up: false,
+    });
+  }
+
+  const text = saved.text || '';
+  if (!text.trim() && !items.length) { clearDraft(); return null; }
+  return { text, media, items, at: saved.at || 0 };
+}
+
+function scheduleDraft() {
+  if (!composerState || composerState.isEdit || composerState.done) return;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => { draftTimer = 0; persistDraft(); }, 500);
+}
+
+// 立即落盘（关面板、切后台、页面要走的时候用，别等防抖）
+function flushDraft() {
+  if (!draftTimer) return;
+  clearTimeout(draftTimer);
+  draftTimer = 0;
+  persistDraft();
+}
+
+async function persistDraft() {
+  if (!composerState || composerState.isEdit || composerState.done) return;
+  const text = els.composerText.value;
+  const atts = composerState.attachments;
+  const media = atts.map((a) => ({
+    k: a.k, t: a.t, m: a.m, w: a.w || 0, h: a.h || 0, dur: a.dur || 0, wave: a.wave || null,
+  }));
+  const blobs = atts.filter((a) => a.blob).map((a) => ({
+    key: DRAFT_BLOB + a.k, blob: a.blob, mime: a.m, size: a.blob.size,
+  }));
+
+  try {
+    if (blobs.length) await dbBlobs.putMany(blobs);
+    // 删掉的附件要连二进制一起清掉，不然草稿越攒越占地方
+    const keep = new Set(blobs.map((b) => b.key));
+    const stale = (await dbBlobs.keys()).filter((k) => k.startsWith(DRAFT_BLOB) && !keep.has(k));
+    if (stale.length) await dbBlobs.deleteMany(stale);
+
+    if (!text.trim() && !media.length) {
+      await dbMeta.del(DRAFT_KEY);
+      draft = null;
+    } else {
+      const at = Date.now();
+      await dbMeta.set(DRAFT_KEY, { text, media, at });
+      draft = { text, media, items: atts.slice(), at };
+    }
+  } catch (e) {
+    console.warn('草稿保存失败', e);
+  }
+  updateComposeBarHint();
+}
+
+async function clearDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = 0;
+  draft = null;
+  updateComposeBarHint();
+  try {
+    const stale = (await dbBlobs.keys()).filter((k) => k.startsWith(DRAFT_BLOB));
+    if (stale.length) await dbBlobs.deleteMany(stale);
+    await dbMeta.del(DRAFT_KEY);
+  } catch { /* 清不掉就算了，只是多占点空间 */ }
+}
+
+// 底部的假输入框兼职草稿提示：有草稿就显示开头几个字，点开接着写
+function updateComposeBarHint() {
+  const btn = $('#btn-compose');
+  const span = btn && btn.querySelector('span');
+  if (!span) return;
+  const has = !!(draft && ((draft.text || '').trim() || (draft.media || []).length));
+  btn.classList.toggle('has-draft', has);
+  if (!has) { span.textContent = '记点什么…'; return; }
+  const excerpt = plainExcerpt(draft.text, 20);
+  span.textContent = excerpt || `${draft.media.length} 个附件还没发出去`;
+}
+
+async function draftSummary() {
+  await draftStore();
+  if (!draft) return null;
+  const len = (draft.text || '').trim().length;
+  const media = (draft.items || []).length;
+  if (!len && !media) return null;
+  return { len, media };
+}
+
 /* ==================== 编辑器 ==================== */
 
 function wireComposer() {
@@ -744,6 +878,7 @@ function wireComposer() {
     autoGrow(els.composerText);
     updateComposerCount();
     renderRefStrip();
+    scheduleDraft();
   });
 
   $('#tool-image').addEventListener('click', () => els.fileImage.click());
@@ -772,26 +907,54 @@ function autoGrow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, window.innerHeight * 0.46) + 'px';
 }
 
-function openComposer({ note = null, attachments = [], text = '' } = {}) {
+async function openComposer({ note = null, attachments = [], text = '' } = {}) {
+  if (composerOpening) return;
+  composerOpening = true;
   const isEdit = !!note;
-  composerState = {
-    id: note ? note.id : null,
-    attachments: (note ? note.media.map((m) => ({
-      k: m.k, t: m.t, m: m.m, p: m.p, w: m.w, h: m.h, dur: m.dur, wave: m.wave,
-      up: true, blob: null, preview: null,
-    })) : []).concat(attachments),
-    isEdit,
-  };
-  els.composer.hidden = false;
-  els.composerTitle.textContent = isEdit ? '编辑笔记' : '新笔记';
-  els.composerText.value = isEdit ? (note.text || '') : text;
-  setTimeout(() => { els.composerText.focus(); autoGrow(els.composerText); }, 60);
-  renderAttachments();
-  renderRefStrip();
-  updateComposerCount();
-  previewExistingMedia();
-  document.body.style.overflow = 'hidden';
-  layerOpened('composer', hideComposer);
+  try {
+    // 新笔记：先把上次没发出去的草稿接上（等首次读盘，之后看内存里的当前值）
+    let draftItems = [];
+    let draftText = '';
+    if (!isEdit) {
+      await draftStore();
+      if (draft) {
+        draftItems = (draft.items || []).map((it) => ({ ...it }));
+        draftText = draft.text || '';
+      }
+    }
+    const base = isEdit
+      ? note.media.map((m) => ({
+        k: m.k, t: m.t, m: m.m, p: m.p, w: m.w, h: m.h, dur: m.dur, wave: m.wave,
+        up: true, blob: null, preview: null,
+      }))
+      : draftItems;
+
+    composerState = {
+      id: note ? note.id : null,
+      attachments: base.concat(attachments),
+      isEdit,
+      done: false,
+    };
+    els.composer.hidden = false;
+    els.composerTitle.textContent = isEdit ? '编辑笔记' : '新笔记';
+    els.composerText.value = isEdit ? (note.text || '') : joinDraftText(text, draftText);
+    setTimeout(() => { els.composerText.focus(); autoGrow(els.composerText); }, 60);
+    renderAttachments();
+    renderRefStrip();
+    updateComposerCount();
+    previewExistingMedia();
+    document.body.style.overflow = 'hidden';
+    layerOpened('composer', hideComposer);
+  } finally {
+    composerOpening = false;
+  }
+}
+
+// 引用、快捷附图这类入口会自带一段正文，草稿正文接在后面
+function joinDraftText(head, tail) {
+  if (!head) return tail || '';
+  if (!tail) return head;
+  return `${head}${/\s$/.test(head) ? '' : ' '}${tail}`;
 }
 
 function closeComposer() {
@@ -799,6 +962,7 @@ function closeComposer() {
 }
 
 function hideComposer() {
+  flushDraft();
   els.composer.hidden = true;
   els.composerText.value = '';
   els.attachStrip.innerHTML = '';
@@ -852,6 +1016,7 @@ function dropRef(id) {
   autoGrow(ta);
   updateComposerCount();
   renderRefStrip();
+  scheduleDraft();
   ta.focus();
 }
 
@@ -864,6 +1029,7 @@ function nextMediaKey() {
 
 function renderAttachments() {
   const strip = els.attachStrip;
+  scheduleDraft();
   if (!composerState || !composerState.attachments.length) { strip.innerHTML = ''; return; }
   strip.innerHTML = composerState.attachments.map((a, i) => {
     let inner;
@@ -974,6 +1140,9 @@ async function saveComposer() {
       toast('已更新');
     } else {
       await store.addNote({ text, media, blobs });
+      // 发出去了，草稿就该清掉；标记 done 防止收面板时又把旧内容写回去
+      composerState.done = true;
+      await clearDraft();
       toast('已记录');
     }
     closeComposer();
@@ -1122,6 +1291,7 @@ function insertRef(id) {
   closeRefPicker();
   renderRefStrip();
   updateComposerCount();
+  scheduleDraft();
   setTimeout(() => {
     ta.focus();
     const pos = keep.length;
@@ -1388,6 +1558,19 @@ function wireSettings() {
   $$('#settings [data-close]').forEach((b) => b.addEventListener('click', closeSettings));
 }
 
+// 设置里的「未发布草稿」：给人一个地方确认草稿还在，也给一个丢弃的出口
+async function fillDraftStatus() {
+  const el = $('#set-draft');
+  if (!el) return;
+  const s = await draftSummary();
+  if (!el.isConnected) return;
+  if (!s) { el.textContent = '没有'; return; }
+  const parts = [];
+  if (s.len) parts.push(`${s.len} 字`);
+  if (s.media) parts.push(`${s.media} 个附件`);
+  el.textContent = parts.join(' · ') || '有';
+}
+
 async function openSettings() {
   els.settings.hidden = false;
   if (els.settingsBody) els.settingsBody.scrollTop = 0;
@@ -1445,13 +1628,15 @@ async function renderSettings() {
       <div class="set-row"><span class="k">已缓存笔记</span><span class="v">${range ? range.count + ' 条' : '0 条'}</span></div>
       <div class="set-row"><span class="k">时间范围</span><span class="v">${range ? `${fmtDateShort(range.oldest)} — ${fmtDateShort(range.newest)}` : '—'}</span></div>
       <div class="set-row"><span class="k">媒体占用</span><span class="v">${fmtBytes(mediaBytes)}${est.quota ? ` / 可用 ${fmtBytes(est.quota)}` : ''}</span></div>
+      <div class="set-row"><span class="k">未发布草稿</span><span class="v" id="set-draft">读取中…</span></div>
       <div class="set-actions" style="flex-direction:column;align-items:stretch">
         <div style="display:flex;gap:8px;align-items:center">
           <input type="date" class="set-input" id="set-cutoff" value="${fmtDateShort(threeMonthsAgo)}" style="margin:0;flex:1">
           <button class="btn-ghost btn-danger-ghost" id="set-clear" style="flex:0 0 auto">清理此前</button>
         </div>
+        <button class="btn-ghost btn-danger-ghost" id="set-drop-draft">丢弃草稿</button>
       </div>
-      <div class="set-hint">清理只是删掉手机上的副本，仓库里的还在。往下翻页时会自动把更早的笔记和媒体再拉回来。</div>
+      <div class="set-hint">清理只是删掉手机上的副本，仓库里的还在。往下翻页时会自动把更早的笔记和媒体再拉回来。<br>编辑器里写了没发布的内容会自动存成本机草稿，下次打开接着写，发布后自动清掉。</div>
     </div>
 
     <div class="set-group">
@@ -1468,6 +1653,7 @@ async function renderSettings() {
     </div>`;
 
   fillOfflineStatus();
+  fillDraftStatus();
 
   $('#set-edit-config').addEventListener('click', () => { closeSettings(); openSetup(true); });
   $('#set-test').addEventListener('click', async () => {
@@ -1511,10 +1697,23 @@ async function renderSettings() {
     renderSettings();
     renderFeed();
   });
+  $('#set-drop-draft').addEventListener('click', async () => {
+    const s = await draftSummary();
+    if (!s) return toast('没有未发布的草稿');
+    if (!window.confirm('丢弃编辑器里还没发布的内容（含附件）？这一步不能撤销。')) return;
+    await clearDraft();
+    fillDraftStatus();
+    toast('草稿已丢弃');
+  });
   $('#set-wipe').addEventListener('click', async () => {
     if (!window.confirm('清空手机上缓存的所有笔记与媒体文件？仓库里的数据不受影响。')) return;
     await dbNotes.clear();
     await dbBlobs.clear();
+    // blobs 里还躺着没发布的草稿附件，一起清掉，别留读不出处的二进制
+    draft = null;
+    draftReady = Promise.resolve(null);
+    await dbMeta.del(DRAFT_KEY).catch(() => {});
+    updateComposeBarHint();
     store.notes = [];
     renderFeed();
     renderSettings();
