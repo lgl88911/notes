@@ -6,6 +6,8 @@
   --text: #1b1a17;
   --text-soft: #55524b;
   --muted: #97928a;
+  /* 条目时间：比正文淡一档的灰，和背景对比约 5:1，仍过 WCAG AA */
+  --time-fg: #6f6a62;
   --line: #e6e2da;
   --line-soft: #efece5;
   --accent: #b8452b;
@@ -27,6 +29,7 @@
     --text: #eceae4;
     --text-soft: #b9b5ab;
     --muted: #837e74;
+    --time-fg: #a29d93;
     --line: #2b2924;
     --line-soft: #232119;
     --accent: #e2704f;
@@ -123,7 +126,7 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 
 .note-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .note-time {
-  font-size: 16.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums;
+  font-size: 16.5px; font-weight: 700; color: var(--time-fg); font-variant-numeric: tabular-nums;
   letter-spacing: .02em; line-height: 1.4;
 }
 .note-state { font-size: 11px; color: var(--accent); letter-spacing: .04em; }
