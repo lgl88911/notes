@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha, getOfflineStatus } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.16';
+const APP_VERSION = 'v1.17';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -101,6 +101,7 @@ export function initUI() {
     refStrip: $('#ref-strip'),
     composerTitle: $('#composer-title'),
     fileImage: $('#file-image'),
+    fileCamera: $('#file-camera'),
     fileVideo: $('#file-video'),
     refPicker: $('#ref-picker'),
     refInput: $('#ref-search-input'),
@@ -875,6 +876,7 @@ async function draftSummary() {
 function wireComposer() {
   $('#btn-compose').addEventListener('click', () => openComposer());
   $('#btn-quick-image').addEventListener('click', () => els.fileImage.click());
+  $('#btn-quick-camera').addEventListener('click', () => els.fileCamera.click());
   $('#btn-quick-audio').addEventListener('click', () => openRecorder());
 
   $$('#composer [data-close]').forEach((b) => b.addEventListener('click', closeComposer));
@@ -888,12 +890,14 @@ function wireComposer() {
   });
 
   $('#tool-image').addEventListener('click', () => els.fileImage.click());
+  $('#tool-camera').addEventListener('click', () => els.fileCamera.click());
   $('#tool-audio').addEventListener('click', () => openRecorder());
   $('#tool-video').addEventListener('click', () => els.fileVideo.click());
   $('#tool-ref').addEventListener('click', openRefPicker);
 
   els.fileImage.multiple = true;
   els.fileImage.addEventListener('change', onPickImages);
+  els.fileCamera.addEventListener('change', onPickCamera);
   els.fileVideo.addEventListener('change', onPickVideo);
 
   document.addEventListener('paste', (e) => {
@@ -1104,6 +1108,14 @@ async function onPickImages(e) {
   } else {
     await addImageFiles(files);
   }
+}
+
+// 拍照：capture 让手机直接开相机；拍完走和选图一样的压缩流程，带进编辑器
+async function onPickCamera(e) {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (!files.length) return;
+  await addImageFiles(files.slice(0, 1));
 }
 
 async function onPickVideo(e) {
