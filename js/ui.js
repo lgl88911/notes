@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha, getOfflineStatus } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.15';
+const APP_VERSION = 'v1.16';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -251,6 +251,12 @@ async function maybeLoadMore() {
 
 function renderFeed(highlightNew = null) {
   if (!els.feed) return;
+  // 界面先出来，笔记还在从本地缓存读：别闪一下「还没有记录」
+  if (!store.loaded) {
+    els.feed.innerHTML = '<div class="empty">载入中…</div>';
+    updateFoot();
+    return;
+  }
   const visible = store.notes.filter((n) => !n.deletingPending).slice(0, renderLimit);
 
   if (!store.notes.length) {
