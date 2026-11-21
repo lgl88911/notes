@@ -5,11 +5,11 @@
 // 做法上跟以前有三处不同：
 //   1. 预缓存逐个文件来（以前是 cache.addAll，一个文件失败整批白做），
 //      失败的记下来，下次启动 / 联网时再补。
-//   2. 导航请求单独处理：任何地址打开都往 index.html 这个键上留一份，
-//      离线时先按原地址找，找不到再退到 index.html。
+//   2. 导航请求缓存优先：有离线外壳就先开门，后台再回源校验；
+//      没有副本时才等网络，彻底没网给一页提示。
 //   3. 资源找不到缓存就回 504，不再拿 index.html 顶替 JS/CSS（那样只会白屏）。
 
-const VERSION = 'v18';
+const VERSION = 'v19';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
 const MEDIA_CACHE = 'notestream-media';
 const MEDIA_MAX_ENTRIES = 300;
@@ -111,45 +111,67 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  e.respondWith(networkFirst(req, SHELL_CACHE));
+  e.respondWith(shellResponse(req, SHELL_CACHE));
 });
 
 async function navigationResponse(req) {
   const cache = await caches.open(SHELL_CACHE);
+  const indexUrl = new URL(INDEX, self.location).href;
+  const rootUrl = new URL('./', self.location).href;
+  const hit = (await cache.match(req, { ignoreSearch: true }))
+    || (await cache.match(indexUrl))
+    || (await cache.match(rootUrl));
+
+  if (hit) {
+    // 有离线副本就先开门，不等网络。回源校验放到后台，
+    // 拿到新文件也只是更新缓存；页面自己的 version.json 检查负责提示重载。
+    refreshNavigation(req, cache, indexUrl).catch(() => {});
+    return hit;
+  }
+
+  // 还没有副本：只能等网络；失败就给离线页
   try {
     // cache: 'no-cache' 强制用 ETag 回源校验，没变就是 304，几乎不花流量
     const res = await fetch(req, { cache: 'no-cache' });
-    if (res.ok) {
-      // 不论用什么地址打开（带参数、走 /notes/ 还是 /notes/index.html），
-      // 都同时按原地址和 index.html 各存一份，离线回退才有得可用
-      cache.put(new URL(INDEX, self.location).href, res.clone());
-      cache.put(req, res.clone());
-    }
+    if (!res.ok) throw new Error(String(res.status));
+    // 不论用什么地址打开（带参数、走 /notes/ 还是 /notes/index.html），
+    // 都同时按原地址和 index.html 各存一份，下次开门才有得可用
+    await Promise.all([cache.put(indexUrl, res.clone()), cache.put(req, res.clone())]);
     return res;
   } catch {
-    const indexUrl = new URL(INDEX, self.location).href;
-    const rootUrl = new URL('./', self.location).href;
-    const hit = (await cache.match(req, { ignoreSearch: true }))
-      || (await cache.match(indexUrl))
-      || (await cache.match(rootUrl));
-    return hit || offlinePage();
+    return offlinePage();
   }
 }
 
-async function networkFirst(req, cacheName) {
+async function refreshNavigation(req, cache, indexUrl) {
+  const res = await fetch(req, { cache: 'no-cache' });
+  if (!res.ok) return;
+  await Promise.all([cache.put(indexUrl, res.clone()), cache.put(req, res.clone())]);
+}
+
+// 界面文件同样缓存优先：打开时不等网络，后台再顺手刷新缓存。
+async function shellResponse(req, cacheName) {
   const cache = await caches.open(cacheName);
+  const hit = (await cache.match(req)) || (await cache.match(req, { ignoreSearch: true }));
+  if (hit) {
+    refreshShell(req, cache).catch(() => {});
+    return hit;
+  }
   try {
-    // 关键：GitHub Pages 给静态资源带了 max-age=600 的 CDN 缓存头，
+    // GitHub Pages 给静态资源带了 max-age=600 的 CDN 缓存头，
     // 普通 fetch(req) 会命中浏览器 HTTP 缓存，最多能拿到 10 分钟前的旧文件。
     const res = await fetch(req, { cache: 'no-cache' });
     if (res.ok) cache.put(req, res.clone());
     return res;
   } catch {
-    const hit = (await cache.match(req)) || (await cache.match(req, { ignoreSearch: true }));
-    if (hit) return hit;
     // 不要拿 index.html 顶替 JS/CSS，那只会让页面白屏且看不出原因
     return new Response('', { status: 504, statusText: 'offline' });
   }
+}
+
+async function refreshShell(req, cache) {
+  const res = await fetch(req, { cache: 'no-cache' });
+  if (res.ok) await cache.put(req, res.clone());
 }
 
 async function cacheFirst(req, cacheName) {

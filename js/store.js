@@ -62,23 +62,27 @@ export const store = {
   /* ==================== 启动 ==================== */
 
   async init() {
-    await this.loadConfig();
+    // 启动时已经读 config 了，这里别再读一遍 IndexedDB
+    if (!this.config) await this.loadConfig();
     if (!this.hasConfig()) { this.loaded = true; return; }
     const list = await dbNotes.all();
     this.notes = list.sort((a, b) => (a.id < b.id ? 1 : -1));
     this.loaded = true;
     this.emit('load');
-    // 后台刷新远端文件树；顺便把别的设备新写/改过的笔记拉回来
-    this.refreshTree({ quiet: true })
-      .then(async () => {
-        if (!this.notes.length && this.remote.paths.length) {
-          await this.loadOlder(PAGE_SIZE);
-        } else {
-          await this.pullRemote().catch(() => {});
-        }
-      })
-      .catch(() => {});
-    this.flushQueue().catch(() => {});
+    // 先把缓存里的记录画出来，再在后台碰网络
+    afterPaint(() => {
+      // 后台刷新远端文件树；顺便把别的设备新写/改过的笔记拉回来
+      this.refreshTree({ quiet: true })
+        .then(async () => {
+          if (!this.notes.length && this.remote.paths.length) {
+            await this.loadOlder(PAGE_SIZE);
+          } else {
+            await this.pullRemote().catch(() => {});
+          }
+        })
+        .catch(() => {});
+      this.flushQueue().catch(() => {});
+    });
   },
 
   /* ==================== 笔记路径 ==================== */
@@ -686,6 +690,11 @@ export const store = {
     return dbBlobs.usageBytes();
   },
 };
+
+function afterPaint(fn) {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(fn, 0));
+  else setTimeout(fn, 0);
+}
 
 function idFromPath(p) {
   const m = /\/([^/]+)\.md$/.exec(p);

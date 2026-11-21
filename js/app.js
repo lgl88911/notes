@@ -9,29 +9,33 @@ import { createUpdater } from './update.js';
 async function boot() {
   const bootEl = document.getElementById('boot');
   try {
-    await requestPersistence();
     await store.loadConfig();
   } catch (e) {
     console.error('配置读取失败', e);
   }
+  // 持久化申请可能要等系统应答，不该挡住开门
+  requestPersistence().catch(() => {});
 
   initUI();
 
   const app = document.getElementById('app');
-  if (store.hasConfig()) {
-    app.hidden = false;
+  const configured = store.hasConfig();
+  app.hidden = !configured;
+  // 读到 token 就先用本地缓存开门：笔记列表和 GitHub 同步都不挡界面
+  if (bootEl) bootEl.hidden = true;
+
+  if (configured) {
     try {
       await store.init();
     } catch (e) {
       console.error(e);
       toast('初始化失败：' + e.message);
+      store.loaded = true;
+      store.emit('load');
     }
   } else {
-    app.hidden = true;
     openSetup(false);
   }
-
-  if (bootEl) bootEl.hidden = true;
 
   window.addEventListener('online', () => {
     store.flushQueue();
@@ -57,7 +61,13 @@ async function boot() {
     notify: (msg) => toast(msg),
     busy: composerBusy,
   });
-  updater.init();
+  // 版本检查要联网，放到首帧之后，别跟界面加载抢资源
+  const startUpdater = () => updater.init();
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => setTimeout(startUpdater, 0));
+  } else {
+    setTimeout(startUpdater, 0);
+  }
 
   // 编辑结束（关闭编辑器）时，把编辑期间攒下的更新放行
   document.addEventListener('visibilitychange', () => {
