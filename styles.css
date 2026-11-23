@@ -501,19 +501,19 @@ input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
   border-top: 1px solid var(--line-soft);
   margin-top: 4px;
 }
-/* 五个工具 + 字数平分一屏，窄屏也不横向滑动 */
+/* 五个工具平分一屏：图标与文字同一行，窄屏也不横向滑动 */
 .tool-btn {
   flex: 1 1 0; min-width: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  padding: 5px 2px; border-radius: 10px;
-  color: var(--text-soft); font-size: 11px;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  padding: 7px 2px; border-radius: 10px;
+  color: var(--text-soft); font-size: 12px;
   white-space: nowrap;
 }
-.tool-btn svg { flex: 0 0 auto; }
+.tool-btn svg { flex: 0 0 auto; width: 19px; height: 19px; }
 .tool-btn:active { background: var(--line-soft); }
 .composer-count {
-  flex: 0 0 auto; min-width: 34px; text-align: right;
-  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0 4px;
+  flex: 0 0 auto; min-width: 32px; text-align: right;
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0 3px;
 }
 
 /* ===================== 选择要引用的笔记 ===================== */
