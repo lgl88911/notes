@@ -12,6 +12,7 @@ import {
 } from './util.js';
 
 const NOTE_PATH_RE = /^notes\/\d{4}\/\d{2}\/[^/]+\.md$/;
+const TAGS_PATH = 'tags.json';   // 可选标签清单，存在仓库根目录，跟着仓库走
 const PAGE_SIZE = 15;
 const DEEP_SEARCH_LIMIT = 600;
 
@@ -20,6 +21,7 @@ export const store = {
   gh: null,
   notes: [],            // 按 id 倒序
   remote: { paths: [], shas: {}, fetchedAt: 0 },  // 远端所有笔记路径（倒序）+ 每个文件的 sha
+  tags: [],                 // 可选标签清单（从 tags.json 同步）
   tombs: new Set(),
   loaded: false,
   syncState: 'idle',    // idle | syncing | error
@@ -42,6 +44,8 @@ export const store = {
     this.tombs = new Set(await dbMeta.get('tombs', []));
     const tree = await dbMeta.get('remoteTree', null);
     if (tree) this.remote = tree;
+    const tags = await dbMeta.get('tags', null);
+    this.tags = Array.isArray(tags) ? tags : [];
     if (cfg && cfg.owner && cfg.repo && cfg.token) {
       this.gh = new GitHubClient(cfg);
     }
@@ -82,6 +86,7 @@ export const store = {
         })
         .catch(() => {});
       this.flushQueue().catch(() => {});
+      this.refreshTags().catch(() => {});
     });
   },
 
@@ -105,13 +110,14 @@ export const store = {
     }));
     const lines = ['---', `id: ${note.id}`, `created: ${note.created}`, `updated: ${note.updated}`];
     if (media.length) lines.push(`media: ${JSON.stringify(media)}`);
+    if (note.tags && note.tags.length) lines.push(`tags: ${JSON.stringify(note.tags)}`);
     lines.push('---');
     return `${lines.join('\n')}\n${note.text || ''}\n`;
   },
 
   fromMarkdown(raw, { path = '' } = {}) {
     let text = raw.replace(/\r\n/g, '\n');
-    const out = { id: '', created: '', updated: '', media: [], text: '', pending: false, remote: true, up: true };
+    const out = { id: '', created: '', updated: '', media: [], tags: [], text: '', pending: false, remote: true, up: true };
 
     if (text.startsWith('---\n')) {
       const end = text.indexOf('\n---', 3);
@@ -125,6 +131,11 @@ export const store = {
           const val = line.slice(idx + 1).trim();
           if (key === 'media') {
             try { out.media = JSON.parse(val).map((m) => ({ ...m, up: true })); } catch { out.media = []; }
+          } else if (key === 'tags') {
+            try {
+              const arr = JSON.parse(val);
+              if (Array.isArray(arr)) out.tags = arr.filter((t) => typeof t === 'string' && t.trim()).map((t) => t.trim());
+            } catch { out.tags = []; }
           } else {
             out[key] = val;
           }
@@ -145,7 +156,7 @@ export const store = {
 
   /* ==================== 新增 / 修改 ==================== */
 
-  buildNote({ id, created, text, media }) {
+  buildNote({ id, created, text, media, tags }) {
     const now = new Date();
     const nid = id || makeId(now);
     const mediaList = (media || []).map((m) => ({
@@ -158,6 +169,7 @@ export const store = {
       updated: isoLocal(now),
       text: text || '',
       media: mediaList,
+      tags: cleanTags(tags),
       pending: true,
       remote: false,
       up: false,
@@ -165,8 +177,8 @@ export const store = {
     };
   },
 
-  async addNote({ text, media = [], blobs = [] }) {
-    const note = this.buildNote({ text, media });
+  async addNote({ text, media = [], blobs = [], tags = [] }) {
+    const note = this.buildNote({ text, media, tags });
     await this.persistBlobs(note.id, blobs);
     await this.persistNote(note);
     this.insertLocal(note);
@@ -175,12 +187,14 @@ export const store = {
     return note;
   },
 
-  async updateNote(id, { text, media, blobs = [] }) {
+  async updateNote(id, { text, media, blobs = [], tags }) {
     const note = this.notes.find((n) => n.id === id);
     if (!note) return null;
     const oldMedia = note.media || [];
     note.text = text;
     note.media = (media || note.media).map((m) => ({ ...m, p: m.p || this.mediaPath(id, m.k, m.m) }));
+    if (tags !== undefined) note.tags = cleanTags(tags);
+    if (!Array.isArray(note.tags)) note.tags = [];
     note.updated = isoLocal(new Date());
     note.pending = true;
     note.pushError = null;
@@ -340,6 +354,110 @@ export const store = {
   missingCount() {
     const local = new Set(this.notes.map((n) => n.id));
     return this.remote.paths.filter((p) => !local.has(idFromPath(p))).length;
+  },
+
+  /* ==================== 标签 ==================== */
+
+  /** 从仓库的 tags.json 读取可选标签清单，本地留一份缓存 */
+  async refreshTags() {
+    if (!this.gh) return this.tags;
+    try {
+      const meta = await this.gh.getMeta(TAGS_PATH);
+      const cachedSha = await dbMeta.get('tagsSha', null);
+      if (meta && meta.sha === cachedSha) return this.tags;
+      let list = [];
+      if (meta) {
+        const raw = await this.gh.getText(TAGS_PATH);
+        try {
+          const v = JSON.parse(raw);
+          if (Array.isArray(v)) list = v;
+        } catch { /* 格式坏了就当空清单，别让整个应用起不来 */ }
+      }
+      this.tags = cleanTags(list);
+      await this.saveTags();
+      if (meta) await dbMeta.set('tagsSha', meta.sha);
+      this.emit('tags');
+      return this.tags;
+    } catch (e) {
+      console.warn('refresh tags failed', e);
+      return this.tags;
+    }
+  },
+
+  async saveTags() {
+    await dbMeta.set('tags', this.tags);
+  },
+
+  /** 把当前标签清单写回仓库，让换设备也能拿到同一份 */
+  async pushTags() {
+    if (!this.gh) throw new Error('未配置仓库');
+    const body = JSON.stringify(this.tags, null, 2) + '\n';
+    const res = await this.gh.putFile(TAGS_PATH, body, 'tags: update list');
+    await dbMeta.set('tagsSha', (res && res.sha) || null);
+    await this.saveTags();
+  },
+
+  async addTag(name) {
+    const n = normalizeTag(name);
+    if (!n) throw new Error('标签名不能为空');
+    if (this.tags.some((t) => t === n)) throw new Error('这个标签已经存在');
+    this.tags = [...this.tags, n];
+    try {
+      await this.pushTags();
+    } catch (e) {
+      this.tags = this.tags.filter((t) => t !== n); // 写不回仓库就别留在本地，免得下次对不上
+      throw e;
+    }
+    this.emit('tags');
+    return n;
+  },
+
+  /** 统计用了某个标签的笔记数；要精确就把远端笔记都拉回来 */
+  async countTagUsage(name) {
+    await this.pullAll();
+    return this.notes.filter((n) => (n.tags || []).includes(name)).length;
+  },
+
+  /**
+   * 统一改写所有笔记里的某个标签。
+   * action='rename'：from → to；action='delete'：把 from 去掉。
+   * 先把远端全部笔记拉回本地，保证没缓存的笔记也改到，再统一推回仓库。
+   */
+  async rewriteTag({ action, from, to }) {
+    if (!this.gh) throw new Error('未配置仓库');
+    await this.pullAll();
+    let changed = 0;
+    for (const note of this.notes) {
+      const tags = Array.isArray(note.tags) ? note.tags : [];
+      if (!tags.includes(from)) continue;
+      let next;
+      if (action === 'rename') {
+        const set = new Set(tags.map((t) => (t === from ? to : t)));
+        next = [...set]; // 目标标签已经存在时只留一个，避免出现重复
+      } else {
+        next = tags.filter((t) => t !== from);
+      }
+      note.tags = cleanTags(next);
+      note.updated = isoLocal(new Date());
+      note.pending = true;          // 打上待推送标记，flushQueue 才会把它写回仓库
+      note.pushError = null;
+      await this.persistNote(note);
+      changed++;
+    }
+
+    if (action === 'rename') {
+      const set = new Set(this.tags.map((t) => (t === from ? to : t)));
+      this.tags = cleanTags([...set]);
+    } else {
+      this.tags = this.tags.filter((t) => t !== from);
+    }
+    await this.pushTags();
+    if (changed) {
+      this.emit('change');
+      await this.flushQueue(); // 改动过的笔记推回仓库；失败会留在待同步队列里重试
+    }
+    this.emit('tags');
+    return { changed };
   },
 
   /* ==================== 翻页回捞 ==================== */
@@ -690,6 +808,20 @@ export const store = {
     return dbBlobs.usageBytes();
   },
 };
+
+function normalizeTag(s) {
+  return String(s ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
+}
+
+function cleanTags(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const t of list) {
+    const n = normalizeTag(t);
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
 
 function afterPaint(fn) {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(fn, 0));

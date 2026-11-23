@@ -39,6 +39,7 @@ async function boot() {
 
   window.addEventListener('online', () => {
     store.flushQueue();
+    store.refreshTags().catch(() => {});
     store.pullRemote().catch(() => {});
   });
   window.addEventListener('offline', () => {
@@ -48,6 +49,7 @@ async function boot() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && store.hasConfig()) {
       store.flushQueue();
+      store.refreshTags().catch(() => {});
       const age = Date.now() - (store.remote.fetchedAt || 0);
       if (age > 60_000) {
         // 回到前台：看远端有没有新笔记（别的设备写的）或改过的
