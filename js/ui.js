@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha, getOfflineStatus } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.18';
+const APP_VERSION = 'v1.19';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -103,9 +103,8 @@ export function initUI() {
     refStrip: $('#ref-strip'),
     tagStrip: $('#tag-strip'),
     composerTitle: $('#composer-title'),
-    fileImage: $('#file-image'),
+    fileMedia: $('#file-media'),
     fileCamera: $('#file-camera'),
-    fileVideo: $('#file-video'),
     refPicker: $('#ref-picker'),
     refInput: $('#ref-search-input'),
     refList: $('#ref-list'),
@@ -923,7 +922,7 @@ async function draftSummary() {
 
 function wireComposer() {
   $('#btn-compose').addEventListener('click', () => openComposer());
-  $('#btn-quick-image').addEventListener('click', () => els.fileImage.click());
+  $('#btn-quick-media').addEventListener('click', () => els.fileMedia.click());
   $('#btn-quick-camera').addEventListener('click', () => els.fileCamera.click());
   $('#btn-quick-audio').addEventListener('click', () => openRecorder());
 
@@ -937,17 +936,15 @@ function wireComposer() {
     scheduleDraft();
   });
 
-  $('#tool-image').addEventListener('click', () => els.fileImage.click());
+  $('#tool-media').addEventListener('click', () => els.fileMedia.click());
   $('#tool-camera').addEventListener('click', () => els.fileCamera.click());
   $('#tool-audio').addEventListener('click', () => openRecorder());
-  $('#tool-video').addEventListener('click', () => els.fileVideo.click());
   $('#tool-ref').addEventListener('click', openRefPicker);
   $('#tool-tag').addEventListener('click', openTagPicker);
 
-  els.fileImage.multiple = true;
-  els.fileImage.addEventListener('change', onPickImages);
+  els.fileMedia.multiple = true;
+  els.fileMedia.addEventListener('change', onPickMedia);
   els.fileCamera.addEventListener('change', onPickCamera);
-  els.fileVideo.addEventListener('change', onPickVideo);
 
   document.addEventListener('paste', (e) => {
     if (!composerState) return;
@@ -1151,17 +1148,41 @@ async function addImageFiles(files) {
   }
 }
 
-async function onPickImages(e) {
+async function addVideoFiles(files) {
+  for (const file of files) {
+    if (!file.type.startsWith('video/')) continue;
+    if (file.size > LIMITS.maxFileBytes) {
+      toast(`视频 ${fmtBytes(file.size)}，超过 25MB 限制，请先压缩或剪短`);
+      continue;
+    }
+    try {
+      const info = await inspectVideo(file);
+      const item = { k: composerState ? nextMediaKey() : 'm1', t: 'video', m: file.type || 'video/mp4', w: info.w, h: info.h, dur: info.dur, blob: file, preview: null, up: false };
+      if (composerState) {
+        composerState.attachments.push(item);
+        renderAttachments();
+      } else {
+        openComposer({ attachments: [item] });
+      }
+    } catch (e) {
+      toast('视频读取失败');
+    }
+  }
+}
+
+// 一个入口选图片或视频：按文件的 MIME 类型分发，图片走压缩、视频走探测
+async function onPickMedia(e) {
   const files = Array.from(e.target.files || []);
   e.target.value = '';
   if (!files.length) return;
+  const images = files.filter((f) => f.type.startsWith('image/'));
+  const videos = files.filter((f) => f.type.startsWith('video/'));
   if (!composerState) {
-    // 从底部快捷入口直接选图 → 打开编辑器
-    await addImageFiles(files.slice(0, 1));
-    if (files.length > 1) await addImageFiles(files.slice(1));
-  } else {
-    await addImageFiles(files);
+    // 先开一个空编辑器，再把选中的媒体逐个追加；避免每个文件都去调 openComposer 抢锁
+    await openComposer();
   }
+  await addImageFiles(images);
+  await addVideoFiles(videos);
 }
 
 // 拍照：capture 让手机直接开相机；拍完走和选图一样的压缩流程，带进编辑器
@@ -1170,24 +1191,6 @@ async function onPickCamera(e) {
   e.target.value = '';
   if (!files.length) return;
   await addImageFiles(files.slice(0, 1));
-}
-
-async function onPickVideo(e) {
-  const file = (e.target.files || [])[0];
-  e.target.value = '';
-  if (!file) return;
-  if (file.size > LIMITS.maxFileBytes) {
-    toast(`视频 ${fmtBytes(file.size)}，超过 25MB 限制，请先压缩或剪短`);
-    return;
-  }
-  const info = await inspectVideo(file);
-  const item = { k: composerState ? nextMediaKey() : 'm1', t: 'video', m: file.type || 'video/mp4', w: info.w, h: info.h, dur: info.dur, blob: file, preview: null, up: false };
-  if (composerState) {
-    composerState.attachments.push(item);
-    renderAttachments();
-  } else {
-    openComposer({ attachments: [item] });
-  }
 }
 
 async function saveComposer() {
