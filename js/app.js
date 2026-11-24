@@ -16,7 +16,7 @@ async function boot() {
     return null;
   });
 
-  // 先把界面挂起来，能画的立刻画（列表部分用上次的快照），别等任何 IO
+  // 先把界面挂起来，能画的立刻画（列表部分用上次的快照），不等待任何 IO
   initUI();
   if (knownConfigured()) {
     app.hidden = false;
