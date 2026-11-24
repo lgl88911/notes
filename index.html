@@ -68,7 +68,7 @@
 <div id="setup" class="sheet-page" hidden>
   <div class="setup-inner">
     <h1 class="setup-title">随想</h1>
-    <p class="setup-sub">短笔记流，数据全部存在你自己的 GitHub 公开仓库里。</p>
+    <p class="setup-sub">短笔记流，数据全部存在你自己的 GitHub 私有仓库里；应用本身从公开页面打开。</p>
 
     <label class="field">
       <span class="field-label">仓库</span>
@@ -90,16 +90,16 @@
     </label>
 
     <div class="setup-hint" id="setup-hint">
-      令牌只保存在本机浏览器里，不会上传到任何服务器。仓库是公开的，任何人都能读到你的笔记，注意别记私密信息。
+      令牌只保存在本机浏览器里，不会上传到任何服务器。数据仓库建议设为私有，只有持令牌的设备能读写笔记。
     </div>
 
     <button class="btn-primary btn-block" id="btn-setup-save">连接并开始</button>
     <button class="btn-text" id="btn-setup-help">怎么创建令牌？</button>
     <div class="setup-help" id="setup-help" hidden>
       <p>1. 打开 GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b></p>
-      <p>2. Repository access 选 Only select repositories，勾选你的笔记仓库</p>
+      <p>2. Repository access 选 Only select repositories，勾选你的私有数据仓库</p>
       <p>3. Permissions → Repository permissions → <b>Contents</b> 设为 Read and write</p>
-      <p>4. 生成后复制到上面的输入框。GitHub Pages 会自动从这个仓库部署这个 App。</p>
+      <p>4. 生成后复制到上面的输入框。数据仓库只存笔记和媒体，App 本身从公开的 Pages 页面打开。</p>
     </div>
   </div>
 </div>

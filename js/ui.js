@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha, getOfflineStatus } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.21';
+const APP_VERSION = 'v1.22';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -575,9 +575,9 @@ async function resolveMediaUrl(note, m) {
   const key = `${note.id}:${m.k}`;
   const local = await store.getBlob(note.id, m.k);
   if (local) return objectUrl(key, local);
+  // 私有仓没有匿名直链，必须带令牌从 API 取，取不到就显示占位
   const fetched = await store.fetchMedia(note.id, m);
   if (fetched) return objectUrl(key, fetched);
-  if (store.gh && m.p && navigator.onLine) return store.gh.rawUrl(m.p);
   return '';
 }
 
@@ -1095,7 +1095,8 @@ function renderAttachments() {
   strip.innerHTML = composerState.attachments.map((a, i) => {
     let inner;
     if (a.t === 'image') {
-      const src = a.preview || (a.p && store.gh ? store.gh.rawUrl(a.p) : '');
+      // 私有仓没有匿名直链，preview 由 previewExistingMedia() 从 API 异步补
+      const src = a.preview || '';
       inner = `<img src="${esc(src)}" alt="" data-aindex="${i}">`;
     } else if (a.t === 'video') {
       inner = `<div class="attach-kind">${a.preview ? `<img src="${esc(a.preview)}">` : '视频'}<br>${fmtDur(a.dur || 0)}</div>`;
@@ -2125,7 +2126,7 @@ export function openSetup(editing = false) {
       const { GitHubClient } = await import('./gh.js');
       const gh = new GitHubClient({ owner, repo, branch, token });
       const info = await gh.verify();
-      if (info.isPrivate) toast('提示：仓库是私有的，图片在网页端将无法匿名访问');
+      if (!info.isPrivate) toast('提示：数据仓库建议设为私有，避免笔记公开可见');
 
       const changed = store.config && (store.config.owner !== owner || store.config.repo !== repo || store.config.branch !== branch);
       if (changed) {

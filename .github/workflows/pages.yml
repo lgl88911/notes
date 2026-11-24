@@ -3,10 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
-    # 记笔记产生的提交只改 notes/ 和 media/，不需要重新部署 App
+    # 数据仓库已独立，功能仓只放 App 代码
     paths-ignore:
-      - 'notes/**'
-      - 'media/**'
       - 'README.md'
   workflow_dispatch:
 
@@ -35,9 +33,9 @@ jobs:
           printf '{\n  "sha": "%s",\n  "app": "%s",\n  "built": "%s"\n}\n' \
             "$GITHUB_SHA" "${APP_VER:-unknown}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > version.json
           cat version.json
-      - name: Strip repo metadata and note data from artifact
-        # 只发布 App 本体；笔记和媒体通过 raw.githubusercontent 读取，不用 Pages 托管
-        run: rm -rf .git .github notes media
+      - name: Strip repo metadata from artifact
+        # 只发布 App 本体；数据仓库独立在私有仓，不在 Pages 上托管
+        run: rm -rf .git .github
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,5 +1,5 @@
 // ===== GitHub API 客户端 =====
-// 只做一件事：把文件可靠地读写进一个公开仓库。
+// 只做一件事：把文件可靠地读写进一个（通常是私有的）数据仓库。
 
 import { bufToBase64, utf8ToBase64, base64ToBuf } from './util.js';
 
@@ -25,10 +25,6 @@ export class GitHubClient {
 
   get apiBase() { return 'https://api.github.com'; }
   get repoPath() { return `/repos/${this.owner}/${this.repo}`; }
-
-  rawUrl(path) {
-    return `https://raw.githubusercontent.com/${this.owner}/${this.repo}/${encodeURIComponent(this.branch)}/${encPath(path)}`;
-  }
 
   pagesUrl(path) {
     return `https://${this.owner}.github.io/${this.repo}/${encPath(path)}`;
@@ -129,10 +125,23 @@ export class GitHubClient {
     return new TextDecoder().decode(bytes);
   }
 
-  /** 读取文件内容为二进制 */
+  /** 读取文件内容为二进制（Contents API，单文件上限 1MB） */
   async getBytes(path) {
     return this.request(`${this.repoPath}/contents/${encPath(path)}?ref=${encodeURIComponent(this.branch)}`, {
       accept: 'application/vnd.github.raw',
+      raw: true,
+    });
+  }
+
+  /**
+   * 按 git blob sha 读取二进制。私有仓媒体必须带令牌读，raw.githubusercontent
+   * 的匿名链接会 404；Contents API 又有 1MB 上限，视频放不进去。
+   * Git Blobs API 支持到 100MB，raw media type 直接返回字节。
+   */
+  async getBlobBySha(sha) {
+    if (!sha) throw new GHError(0, '缺少文件 sha');
+    return this.request(`${this.repoPath}/git/blobs/${encodeURIComponent(sha)}`, {
+      accept: 'application/vnd.github.raw+json',
       raw: true,
     });
   }

@@ -1,18 +1,21 @@
 # 随想 · note stream
 
-一个用来记短笔记的手机 App。文字、图片、音频、视频都能记，所有数据存在你自己的 GitHub 公开仓库里，手机本地只是缓存。
+一个用来记短笔记的手机 App。文字、图片、音频、视频都能记，所有数据存在你自己的 GitHub 私有仓库里，手机本地只是缓存。App 本身由公开的 GitHub Pages 页面提供，两者分开。
 
 形式参考 [qiaomu.ai/notes](https://www.qiaomu.ai/notes/)：倒序时间流，每条一个时间点，一条笔记一个文件。
 
 ## 它是怎么工作的
 
 ```
-手机浏览器 (PWA)
+手机浏览器 (PWA，公开 Pages 页面)
 ├── IndexedDB     本地缓存 + 待推送队列 + 媒体二进制 + 没发布的草稿
-└── GitHub API ──► 你的仓库（公开）
+└── GitHub API ──► 你的私有数据仓库
                     notes/2026/11/20261108T123045-7f3a.md
                     media/2026/11/20261108T123045-7f3a/m1.webp
+                    tags.json
 ```
+
+功能和数据分立：App 代码在公开仓 `notes`，由 GitHub Pages 部署；笔记、媒体和标签清单在私有仓 `notes_data`。首次打开 App 时填私有仓的信息，令牌只存在本机。
 
 - **仓库是唯一事实来源**。手机丢了、清了缓存、换了设备，重新填一遍仓库信息就能全部拉回来。
 - **本地优先**。写完立刻落本地并上屏，网络恢复后自动推送；断网也能记。
@@ -21,23 +24,19 @@
 
 ## 部署并装到手机
 
-这个 App 没有构建步骤，一个仓库同时当数据仓库和站点仓库。
+这个 App 没有构建步骤，用两个仓库：一个公开仓放代码并部署页面，一个私有仓放数据。
 
-1. 建一个**公开**仓库（比如 `notes`）。
-2. 推到仓库根目录（`main` 分支）：
-   ```bash
-   git remote add origin git@github.com:<用户名>/notes.git
-   git push -u origin main
-   ```
-3. 仓库 Settings → Pages → Source 选 **GitHub Actions**。仓库里已带 `.github/workflows/pages.yml`，推完自动部署，地址是 `https://<用户名>.github.io/notes/`。
-4. 手机 Chrome 打开这个地址 → 菜单 → **安装应用**（或「添加到主屏幕」）。桌面出现图标，点开是全屏无地址栏的独立窗口。
-5. 首次打开填三项：用户名、仓库名、令牌。令牌这样拿：
+1. 建一个**公开**仓库放 App 代码（比如 `notes`），把本项目推到根目录的 `main` 分支。
+2. 仓库 Settings → Pages → Source 选 **GitHub Actions**。仓库里已带 `.github/workflows/pages.yml`，推完自动部署，地址是 `https://<用户名>.github.io/notes/`。
+3. 另建一个**私有**仓库放数据（比如 `notes_data`），里面只需要 `notes/`、`media/`、`tags.json` 三个路径，默认分支建议用 `main`。
+4. 生成令牌：
    - GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens**
-   - Repository access 选 Only select repositories，勾选笔记仓库
+   - Repository access 选 Only select repositories，勾选上一步的**私有数据仓库**
    - Permissions → Repository permissions → **Contents: Read and write**
-6. 点「连接并开始」。
+5. 手机 Chrome 打开 Pages 地址 → 菜单 → **安装应用**（或「添加到主屏幕」）。桌面出现图标，点开是全屏无地址栏的独立窗口。
+6. 首次打开填四项：用户名、数据仓库名、令牌、分支（`main`），点「连接并开始」。
 
-令牌只存在手机浏览器的 IndexedDB 里，不经过任何第三方服务器。
+令牌只存在手机浏览器的 IndexedDB 里，不经过任何第三方服务器。换设备时打开同一个 Pages 地址，重新填一遍数据仓库信息即可同步全部笔记。
 
 ### 关于「安装应用」入口
 
@@ -139,10 +138,11 @@ tags: ["工作","灵感"]
 
 ## 注意
 
-- 仓库是公开的，**任何人都能读到你的笔记**。私密内容不要记。
+- 数据仓库是私有的，只有持令牌的设备能读写。公开仓只放 App 代码，不含笔记内容。
+- 私有仓的媒体没有匿名直链，读取时走带令牌的 Git Blobs API，取回后缓存在本机 IndexedDB；换设备首次看旧图会走一次 API。
 - 仓库里放二进制会让 clone 变慢，建议定期用「清理此前」管住手机端，仓库端如果在意体积可以另开一个仓库放媒体（改 `store.js` 的 `mediaPath` 即可）。
 - iOS 上如果长期不用，Safari 可能回收 PWA 的本地存储。数据都在仓库里，重新拉一遍就行。
-- 令牌泄露等于把仓库写权限给出去，别把浏览器里的配置截图发出去。
+- 令牌泄露等于把私有数据仓库的写权限给出去，别把浏览器里的配置截图发出去。
 
 ## 目录
 
@@ -152,11 +152,11 @@ styles.css            样式
 js/app.js             启动
 js/ui.js              界面、编辑器、搜索、设置
 js/store.js           状态与同步引擎（推送/回捞/删除/清理）
-js/gh.js              GitHub Contents + Tree API
+js/gh.js              GitHub Contents + Tree + Blobs API
 js/db.js              IndexedDB
 js/media.js           图片压缩、录音、视频探测
 js/util.js            工具函数
-sw.js                 Service Worker（离线外壳 + 媒体缓存）
+sw.js                 Service Worker（离线外壳）
 manifest.webmanifest  PWA 清单
 .github/workflows/    GitHub Pages 自动部署
 ```

@@ -1,9 +1,10 @@
 // ===== 状态与同步引擎 =====
 // 设计要点：
-//   1. GitHub 仓库是唯一事实来源，本地 IndexedDB 只是缓存 + 待推送队列
+//   1. 私有数据仓库是唯一事实来源，本地 IndexedDB 只是缓存 + 待推送队列
 //   2. 笔记一条一个 Markdown 文件：notes/YYYY/MM/<id>.md
 //   3. 媒体一条一个文件：media/YYYY/MM/<id>/<k>.<ext>
 //   4. 本地可按日期清理；翻页时按需从仓库回捞被清掉的笔记
+//   5. 私有仓媒体走带令牌的 Git Blobs API，按文件树里的 sha 读取
 
 import { notes as dbNotes, blobs as dbBlobs, meta as dbMeta } from './db.js';
 import { GitHubClient, GHError } from './gh.js';
@@ -318,7 +319,8 @@ export const store = {
       const { files, truncated } = await this.gh.tree();
       const shas = {};
       for (const f of files) {
-        if (NOTE_PATH_RE.test(f.path)) shas[f.path] = f.sha;
+        // 笔记的 sha 用来判断别处改过；媒体的 sha 用来走 Blobs API 读私有仓文件
+        if (NOTE_PATH_RE.test(f.path) || f.path.startsWith('media/')) shas[f.path] = f.sha;
       }
       const paths = files
         .filter((f) => NOTE_PATH_RE.test(f.path))
@@ -624,15 +626,21 @@ export const store = {
     await dbBlobs.deleteMany([this.blobKey(noteId, k)]);
   },
 
-  /** 从仓库回捞单个媒体文件并缓存 */
+  /** 从仓库回捞单个媒体文件并缓存（私有仓：带令牌走 Blobs API） */
   async fetchMedia(noteId, media) {
     if (!this.gh || !media.p) return null;
     const existing = await this.getBlob(noteId, media.k);
     if (existing) return existing;
     try {
-      const res = await fetch(this.gh.rawUrl(media.p), { cache: 'force-cache' });
-      if (!res.ok) throw new Error(String(res.status));
-      const blob = await res.blob();
+      // 文件树里缓存了每个 blob 的 sha，优先用它；没有就现取一次元数据
+      let sha = (this.remote.shas || {})[media.p];
+      if (!sha) {
+        const meta = await this.gh.getMeta(media.p);
+        sha = meta && meta.sha;
+      }
+      if (!sha) throw new Error('找不到媒体文件 sha');
+      const bytes = await this.gh.getBlobBySha(sha);
+      const blob = new Blob([bytes], { type: media.m || 'application/octet-stream' });
       await this.putBlob(noteId, media.k, blob);
       return blob;
     } catch (e) {

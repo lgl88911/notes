@@ -9,10 +9,8 @@
 //      没有副本时才等网络，彻底没网给一页提示。
 //   3. 资源找不到缓存就回 504，不再拿 index.html 顶替 JS/CSS（那样只会白屏）。
 
-const VERSION = 'v24';
+const VERSION = 'v25';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
-const MEDIA_CACHE = 'notestream-media';
-const MEDIA_MAX_ENTRIES = 300;
 const INDEX = './index.html';
 
 const SHELL = [
@@ -50,6 +48,8 @@ self.addEventListener('activate', (e) => {
     await Promise.all(keys
       .filter((k) => k.startsWith('notestream-shell-') && k !== SHELL_CACHE)
       .map((k) => caches.delete(k)));
+    // 媒体改成带令牌的 Blobs API 后，raw 直链的旧缓存再也用不上，清掉
+    await caches.delete('notestream-media').catch(() => {});
     await self.clients.claim();
     // 刚接管，如果还有没缓存到的文件，趁这会儿大概连着网，再补一次
     precacheShell().catch(() => {});
@@ -86,14 +86,9 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // GitHub API 不缓存，避免读到过期数据
+  // GitHub API 不缓存，避免读到过期数据；私有仓媒体也走这里，
+  // 二进制由页面取回后存 IndexedDB，离线看图靠那层缓存
   if (url.host === 'api.github.com') return;
-
-  // 媒体文件：缓存优先
-  if (url.host === 'raw.githubusercontent.com') {
-    e.respondWith(cacheFirst(req, MEDIA_CACHE));
-    return;
-  }
 
   if (url.origin !== location.origin) return;
 
@@ -172,29 +167,6 @@ async function shellResponse(req, cacheName) {
 async function refreshShell(req, cache) {
   const res = await fetch(req, { cache: 'no-cache' });
   if (res.ok) await cache.put(req, res.clone());
-}
-
-async function cacheFirst(req, cacheName) {
-  const cache = await caches.open(cacheName);
-  const hit = await cache.match(req);
-  if (hit) return hit;
-  try {
-    const res = await fetch(req);
-    if (res.ok) {
-      cache.put(req, res.clone());
-      trim(cache);
-    }
-    return res;
-  } catch {
-    return new Response('', { status: 504, statusText: 'offline' });
-  }
-}
-
-async function trim(cache) {
-  const keys = await cache.keys();
-  if (keys.length <= MEDIA_MAX_ENTRIES) return;
-  const drop = keys.slice(0, keys.length - MEDIA_MAX_ENTRIES);
-  await Promise.all(drop.map((k) => cache.delete(k)));
 }
 
 /** 连缓存都没有的时候，至少给一页人话，而不是浏览器的断网提示 */
