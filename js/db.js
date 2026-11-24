@@ -1,7 +1,7 @@
 // ===== 本地数据库（IndexedDB） =====
 // notes : 笔记元数据与正文
 // blobs : 媒体二进制（key = 媒体在笔记里的局部 key）
-// meta  : 配置、远端文件树缓存、墓碑（已删除 id）
+// meta  : 配置、远端文件树缓存、墓碑（已删除 id）；启动时用一次事务批量读
 
 const DB_NAME = 'note-stream';
 const DB_VER = 1;
