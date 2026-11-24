@@ -1,5 +1,5 @@
 // ===== GitHub API 客户端 =====
-// 只做一件事：把文件可靠地读写进一个（通常是私有的）数据仓库。
+// 把文件可靠地读写进一个（通常是私有的）数据仓库，部署重试触发改动。
 
 import { bufToBase64, utf8ToBase64, base64ToBuf } from './util.js';
 
