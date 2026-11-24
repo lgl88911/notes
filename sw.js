@@ -9,7 +9,7 @@
 //      没有副本时才等网络，彻底没网给一页提示。
 //   3. 资源找不到缓存就回 504，不再拿 index.html 顶替 JS/CSS（那样只会白屏）。
 
-const VERSION = 'v27';
+const VERSION = 'v28';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
 const INDEX = './index.html';
 
