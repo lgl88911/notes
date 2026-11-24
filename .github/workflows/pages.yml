@@ -3,7 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
-    # 数据仓库已独立到 notes_data，功能仓只放 App 代码
+    # 数据仓库独立在 notes_data，本仓只放 App 代码与部署配置
     paths-ignore:
       - 'README.md'
   workflow_dispatch:
