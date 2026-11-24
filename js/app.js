@@ -1,13 +1,28 @@
 // ===== 启动 =====
 
-import { store } from './store.js';
+import { store, knownConfigured } from './store.js';
 import { initUI, openSetup } from './ui.js';
-import { requestPersistence } from './db.js';
+import { requestPersistence, notes as dbNotes } from './db.js';
 import { toast } from './util.js';
 import { createUpdater } from './update.js';
 
 async function boot() {
   const bootEl = document.getElementById('boot');
+  const app = document.getElementById('app');
+
+  // 本地缓存的笔记和配置互不依赖，一起要：串着等就是白等一次 IndexedDB
+  const localNotes = dbNotes.all().catch((e) => {
+    console.error('本地笔记读取失败', e);
+    return null;
+  });
+
+  // 先把界面挂起来，能画的立刻画（列表部分用上次的快照），别等任何 IO
+  initUI();
+  if (knownConfigured()) {
+    app.hidden = false;
+    if (bootEl) bootEl.hidden = true;
+  }
+
   try {
     await store.loadConfig();
   } catch (e) {
@@ -16,17 +31,14 @@ async function boot() {
   // 持久化申请可能要等系统应答，不该挡住开门
   requestPersistence().catch(() => {});
 
-  initUI();
-
-  const app = document.getElementById('app');
   const configured = store.hasConfig();
   app.hidden = !configured;
-  // 读到 token 就先用本地缓存开门：笔记列表和 GitHub 同步都不挡界面
   if (bootEl) bootEl.hidden = true;
 
   if (configured) {
     try {
-      await store.init();
+      // 进到这里界面已经在屏幕上了；这一句只是把缓存里的真实数据换上去
+      await store.init(await localNotes);
     } catch (e) {
       console.error(e);
       toast('初始化失败：' + e.message);

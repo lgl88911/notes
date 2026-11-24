@@ -12,6 +12,15 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
+<!-- 模块图一次拉齐：否则 app.js 解析完才发现 ui.js，再发现 store.js，一路串下去 -->
+<link rel="modulepreload" href="js/app.js">
+<link rel="modulepreload" href="js/ui.js">
+<link rel="modulepreload" href="js/store.js">
+<link rel="modulepreload" href="js/db.js">
+<link rel="modulepreload" href="js/gh.js">
+<link rel="modulepreload" href="js/util.js">
+<link rel="modulepreload" href="js/media.js">
+<link rel="modulepreload" href="js/update.js">
 <title>随想</title>
 </head>
 <body>

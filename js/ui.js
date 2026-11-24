@@ -10,7 +10,7 @@ import { compressImage, inspectVideo, createRecorder, LIMITS, objectUrl } from '
 import { getUpdater, shortSha, getOfflineStatus } from './update.js';
 
 const els = {};
-const APP_VERSION = 'v1.23';
+const APP_VERSION = 'v1.24';
 let renderLimit = 30;
 let loadingOlder = false;
 let composerState = null;
@@ -19,6 +19,53 @@ let tagFilter = null;     // 当前按标签查看的标签名，null 表示全�
 let tagPickState = null;  // 标签选择面板里临时的勾选集合
 let recorder = null;
 let recTimer = 0;
+
+/* ==================== 首帧列表快照 ==================== */
+// 目的只有一个：打开应用时立刻有内容可看。
+// 笔记列表存在 IndexedDB 里，读它总得等一次异步；这里把最后一次渲染出来的
+// 前几十条压缩后写进 localStorage（同步读取），首帧直接画它，
+// 真正的数据到了再覆盖一次。快照只用来显示，不参与任何写操作。
+
+const FEED_SNAP_KEY = 'ns:feed-snapshot';
+const FEED_SNAP_MAX = 40;
+let feedSnapTimer = 0;
+
+function saveFeedSnapshot(list) {
+  clearTimeout(feedSnapTimer);
+  feedSnapTimer = setTimeout(() => {
+    try {
+      const slim = list.slice(0, FEED_SNAP_MAX).map((n) => ({
+        id: n.id,
+        created: n.created,
+        updated: n.updated,
+        text: (n.text || '').slice(0, 500),
+        tags: n.tags || [],
+        media: (n.media || []).map((m) => ({ k: m.k, t: m.t, w: m.w, h: m.h, dur: m.dur })),
+        pending: !!n.pending,
+        pushError: !!n.pushError,
+      }));
+      localStorage.setItem(FEED_SNAP_KEY, JSON.stringify(slim));
+    } catch { /* 隐私模式、配额满：只是少了首帧加速，不影响功能 */ }
+  }, 400);
+}
+
+function readFeedSnapshot() {
+  try {
+    const raw = localStorage.getItem(FEED_SNAP_KEY);
+    if (!raw) return null;
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list) || !list.length) return null;
+    // 快照里的笔记不在 store.notes 里，标记一下，别让图片加载去查 store
+    return list.map((n) => ({ ...n, _snap: true }));
+  } catch {
+    return null;
+  }
+}
+
+function dropFeedSnapshot() {
+  clearTimeout(feedSnapTimer);
+  try { localStorage.removeItem(FEED_SNAP_KEY); } catch { /* 忽略 */ }
+}
 
 /* ==================== 层级与返回键 ==================== */
 // 每打开一个面板，就在历史里压一条真实条目（此时一定在点击事件里，带用户手势）。
@@ -276,13 +323,23 @@ async function maybeLoadMore() {
 
 function renderFeed(highlightNew = null) {
   if (!els.feed) return;
-  // 界面先出来，笔记还在从本地缓存读：别闪一下「还没有记录」
-  if (!store.loaded) {
-    els.feed.innerHTML = '<div class="empty">载入中…</div>';
-    updateFoot();
-    return;
+
+  let all;
+  let snapshot = false;
+  if (store.loaded) {
+    all = store.notes.filter((n) => !n.deletingPending);
+  } else {
+    // 本地列表还在读：先用上次退出时的列表快照把内容画出来。
+    // 读 IndexedDB 通常只要几十毫秒，但慢的时候不该让人对着「载入中…」干等。
+    snapshot = true;
+    all = readFeedSnapshot();
+    if (!all) {
+      els.feed.innerHTML = '<div class="empty">载入中…</div>';
+      updateFoot();
+      return;
+    }
   }
-  const all = store.notes.filter((n) => !n.deletingPending);
+
   const scoped = tagFilter ? all.filter((n) => (n.tags || []).includes(tagFilter)) : all;
   const visible = scoped.slice(0, renderLimit);
   const parts0 = [];
@@ -323,12 +380,21 @@ function renderFeed(highlightNew = null) {
     parts.push(noteHTML(n));
   }
   els.feed.innerHTML = parts.join('');
+  els.feed.dataset.snapshot = snapshot ? '1' : '';
+
+  if (snapshot) {
+    // 快照里没有真正的笔记对象，图片、翻页、底部计数都留给随后那次真实渲染
+    els.foot.textContent = '';
+    return;
+  }
+
   if (highlightNew) {
     const el = els.feed.querySelector(`.note[data-id="${highlightNew}"]`);
     if (el) el.classList.add('just-in');
   }
   updateFoot();
   loadVisibleImages();
+  saveFeedSnapshot(all);
 }
 
 function updateFoot() {
@@ -2009,6 +2075,7 @@ async function renderSettings() {
     await dbMeta.del(DRAFT_KEY).catch(() => {});
     updateComposeBarHint();
     store.notes = [];
+    dropFeedSnapshot();
     renderFeed();
     renderSettings();
     toast('本地缓存已清空');

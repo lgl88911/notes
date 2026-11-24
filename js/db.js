@@ -116,6 +116,20 @@ export const meta = {
     const row = await run(['meta'], 'readonly', (s) => req(s.get(k)));
     return row ? row.v : dflt;
   },
+  /**
+   * 一次事务读多个键。启动时配置、墓碑、远端文件树、标签都要读，
+   * 分开读就是四次事务排队，合并成一次能省掉几十毫秒的开机时间。
+   */
+  async getMany(keys) {
+    const out = {};
+    await run(['meta'], 'readonly', (s) => {
+      for (const k of keys) {
+        const r = s.get(k);
+        r.onsuccess = () => { out[k] = r.result ? r.result.v : undefined; };
+      }
+    });
+    return out;
+  },
   set(k, v) {
     return run(['meta'], 'readwrite', (s) => { s.put({ k, v }); });
   },

@@ -17,6 +17,22 @@ const TAGS_PATH = 'tags.json';   // 可选标签清单，存在仓库根目录�
 const PAGE_SIZE = 15;
 const DEEP_SEARCH_LIMIT = 600;
 
+// 启动时想让界面尽早出来，但又得先知道有没有配置过。
+// 配置存在 IndexedDB 里，读它要等一次异步；这个标记放 localStorage（同步读），
+// 只是"上次配置是好用的"的提示，真正的配置仍然以 IndexedDB 为准。
+const CONFIG_HINT_KEY = 'ns:configured';
+
+function setConfigHint(on) {
+  try {
+    if (on) localStorage.setItem(CONFIG_HINT_KEY, '1');
+    else localStorage.removeItem(CONFIG_HINT_KEY);
+  } catch { /* 隐私模式：退化成每次等配置读完再开门 */ }
+}
+
+export function knownConfigured() {
+  try { return localStorage.getItem(CONFIG_HINT_KEY) === '1'; } catch { return false; }
+}
+
 export const store = {
   config: null,
   gh: null,
@@ -40,16 +56,17 @@ export const store = {
   /* ==================== 配置 ==================== */
 
   async loadConfig() {
-    const cfg = await dbMeta.get('config', null);
+    // 一次事务读齐四个键：启动路径上每个来回都要算进开机时间
+    const m = await dbMeta.getMany(['config', 'tombs', 'remoteTree', 'tags']);
+    const cfg = m.config || null;
     this.config = cfg;
-    this.tombs = new Set(await dbMeta.get('tombs', []));
-    const tree = await dbMeta.get('remoteTree', null);
-    if (tree) this.remote = tree;
-    const tags = await dbMeta.get('tags', null);
-    this.tags = Array.isArray(tags) ? tags : [];
+    this.tombs = new Set(Array.isArray(m.tombs) ? m.tombs : []);
+    if (m.remoteTree) this.remote = m.remoteTree;
+    this.tags = Array.isArray(m.tags) ? m.tags : [];
     if (cfg && cfg.owner && cfg.repo && cfg.token) {
       this.gh = new GitHubClient(cfg);
     }
+    setConfigHint(this.hasConfig());
     return cfg;
   },
 
@@ -57,6 +74,7 @@ export const store = {
     this.config = cfg;
     await dbMeta.set('config', cfg);
     this.gh = new GitHubClient(cfg);
+    setConfigHint(this.hasConfig());
     this.emit('config');
   },
 
@@ -66,11 +84,12 @@ export const store = {
 
   /* ==================== 启动 ==================== */
 
-  async init() {
+  async init(preloaded = null) {
     // 启动时已经读 config 了，这里别再读一遍 IndexedDB
     if (!this.config) await this.loadConfig();
     if (!this.hasConfig()) { this.loaded = true; return; }
-    const list = await dbNotes.all();
+    // 启动时本地笔记列表已经在和读配置并行地取了，直接用，别重复扫一遍
+    const list = preloaded || await dbNotes.all();
     this.notes = list.sort((a, b) => (a.id < b.id ? 1 : -1));
     this.loaded = true;
     this.emit('load');

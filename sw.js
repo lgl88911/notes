@@ -9,7 +9,7 @@
 //      没有副本时才等网络，彻底没网给一页提示。
 //   3. 资源找不到缓存就回 504，不再拿 index.html 顶替 JS/CSS（那样只会白屏）。
 
-const VERSION = 'v26';
+const VERSION = 'v27';
 const SHELL_CACHE = `notestream-shell-${VERSION}`;
 const INDEX = './index.html';
 
@@ -113,9 +113,13 @@ async function navigationResponse(req) {
   const cache = await caches.open(SHELL_CACHE);
   const indexUrl = new URL(INDEX, self.location).href;
   const rootUrl = new URL('./', self.location).href;
-  const hit = (await cache.match(req, { ignoreSearch: true }))
-    || (await cache.match(indexUrl))
-    || (await cache.match(rootUrl));
+  // 三处候选同时找：串着找就是连续三次缓存查询，开门会明显变慢
+  const [exact, index, root] = await Promise.all([
+    cache.match(req, { ignoreSearch: true }),
+    cache.match(indexUrl),
+    cache.match(rootUrl),
+  ]);
+  const hit = exact || index || root;
 
   if (hit) {
     // 有离线副本就先开门，不等网络。回源校验放到后台，
