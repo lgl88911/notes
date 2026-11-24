@@ -24,7 +24,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Write deploy marker
         # App 端定时读这个文件比对提交号，用来判断线上是否换了新版本；
         # app 字段取自源码里的 APP_VERSION，设置页拿来显示
@@ -36,9 +36,9 @@ jobs:
       - name: Strip repo metadata from artifact
         # 只发布 App 本体；数据仓库独立在私有仓，不在 Pages 上托管
         run: rm -rf .git .github
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: .
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
